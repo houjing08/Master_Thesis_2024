@@ -11,6 +11,7 @@ class Preprocess():
     """ Common preprocessing tools """
     def __init__(self):
         self.scaler = MinMaxScaler()   
+        self.threshold = 0.5
 
     def transform(self, X):
         return self.scaler.transform(X.reshape(-1,1)).reshape(X.shape)
@@ -22,6 +23,11 @@ class Preprocess():
         if add_panel:
             data = np.expand_dims(data, -1)
         return self.transform(data.astype("float32"))   
+
+    def get_labels(self, X):
+        """ Determine labels on a matrix of probabilities p \in [0,1]:
+            label = 1 if p > threshold else 0. """
+        return np.where(X > self.threshold, 1., 0.)
 
 ## ==================================================
 #

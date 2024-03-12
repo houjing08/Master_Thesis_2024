@@ -1,6 +1,7 @@
 import tensorflow as tf
 import keras
 from keras import layers
+from keras.constraints import max_norm
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -12,6 +13,7 @@ class model_config(keras.Model):
         super().__init__(**kwargs)
         self.compile_args = dict(optimizer='adam', loss='binary_crossentropy')
         self.training_args = dict(epochs=1, batch_size=1, shuffle=True, verbose=0)
+        self.grayscale = 255.
     
     def config(self, conf_type='train', **kwargs):
         """ Resets default model compile and fit parameters """
@@ -77,7 +79,7 @@ class AE_dense(model_config):
     An organized V-cycle of layers: 
     - dense layers consist of multiples of 2 the latent dimension
     """
-    def __init__(self, latent_dim, img_shape, depth, **kwargs):
+    def __init__(self, img_shape, depth, latent_dim=32, **kwargs):
         """
         @params:
         - latent_dim = encoder dimension
@@ -100,32 +102,34 @@ class AE_dense(model_config):
                                        name='autoencoder')
         # decoder
         decoder_inputs = keras.Input(shape=self.encoder.output_shape[1:], name='codes')
-        decoder_outputs = self.autoencoder.layers[-self.depth](decoder_inputs)
-        if self.depth>1:
-            # loop over decoder layers of autoencoder
-            for layer in self.autoencoder.layers[-self.depth+1:]:
-                decoder_outputs = layer(decoder_outputs)
+        latent_layer = np.nonzero([s.name=='encode_0' for s in self.autoencoder.layers])[0][0]
+
+        for i, layer in enumerate(self.autoencoder.layers[latent_layer+1:]):
+            decoder_outputs = layer(decoder_inputs if i==0 else decoder_outputs)
 
         self.decoder = keras.Model(decoder_inputs, decoder_outputs, name='decoder')
         
     def get_encoder(self, inputs):
         """ returns the graph used to define an encoder """
         dim = self.latent_dim * np.power(2, range(self.depth-1,-1,-1))
+        flat_inputs = layers.Flatten()(inputs)
         for i in range(self.depth):
             level = self.depth-i-1
             encoded = layers.Dense(dim[i],activation='relu', name='encode_%i'%level) \
-                    (inputs if i==0 else encoded)
+                    (flat_inputs if i==0 else encoded)
         return encoded
 
     def get_decoder(self, inputs):
         """ returns the graph used to define a decoder """
         dim = self.latent_dim * np.power(2, range(self.depth))
-        for i in range(self.depth):
+        for i in range(1,self.depth):
             decoded = layers.Dense(dim[i], activation='relu', name='decode_%i'%i)\
-                            (inputs if i==0 else decoded)
+                            (inputs if i==1 else decoded)
         # output image       
-        decoded = layers.Dense(self.img_shape[0], activation='sigmoid', name='outputs')\
+        decoded = layers.Dense(np.prod(self.img_shape), activation='sigmoid', name='outputs')\
                     (decoded if self.depth>1 else inputs)
+
+        decoded = layers.Reshape(self.img_shape)(decoded)
         
         return decoded
 
@@ -293,9 +297,9 @@ class AE_variational(model_config):
 
         # decoder
         decoder_inputs = keras.Input(shape=self.encoder.output_shape[-1][1:], name='codes')
-        layer_num  = len(self.encoder.layers)
+        latent_layer = np.nonzero([s.name=='latents' for s in self.autoencoder.layers])[0][0]
 
-        for i, layer in enumerate(self.autoencoder.layers[layer_num:]):
+        for i, layer in enumerate(self.autoencoder.layers[latent_layer+1:]):
             decoder_outputs = layer(decoder_inputs if i==0 else decoder_outputs)
 
         self.decoder = keras.Model(decoder_inputs, decoder_outputs, name='decoder')
@@ -317,15 +321,17 @@ class AE_variational(model_config):
         self.encoded_shape = encoded.shape[1:]
         x = layers.Flatten(name='flatten')(encoded)
         x = layers.Dense(self.latent_dim // 2, activation="relu", name='dense_codes_0')(x)
+        z_mean = layers.Dense(self.latent_dim, name="z_mean")(x)
+        z_log_var = layers.Dense(self.latent_dim, name="z_log_var")(x)
             
         if self.ARCH_NN == 'vae':
             z_mean = layers.Dense(self.latent_dim, name="z_mean")(x)
             z_log_var = layers.Dense(self.latent_dim, name="z_log_var")(x)
             z = Sampling(name='latents')([z_mean, z_log_var])
         else: # (vanilla) autoencoder 
+            z_mean = layers.Dense(self.latent_dim, kernel_constraint=max_norm(0.), name="z_mean")(x)
+            z_log_var = layers.Dense(self.latent_dim, kernel_constraint=max_norm(0.), name="z_log_var")(x)
             z = layers.Dense(self.latent_dim, name="latents")(x)
-            z_log_var = tf.zeros_like(z)
-            z_mean = tf.zeros_like(z)
             
             
         return z_mean, z_log_var, z

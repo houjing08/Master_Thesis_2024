@@ -131,9 +131,9 @@ class AE_variational(VAE):
 
         # decoder
         decoder_inputs = keras.Input(shape=self.encoder.output_shape[-1][1:], name='codes')
-        layer_num  = len(self.encoder.layers)
+        latent_layer = np.nonzero([s.name=='latents' for s in self.autoencoder.layers])[0][0]
 
-        for i, layer in enumerate(self.autoencoder.layers[layer_num:]):
+        for i, layer in enumerate(self.autoencoder.layers[latent_layer+1:]):
             decoder_outputs = layer(decoder_inputs if i==0 else decoder_outputs)
 
         self.decoder = keras.Model(decoder_inputs, decoder_outputs, name='decoder')
