@@ -9,9 +9,10 @@ from sklearn.model_selection import train_test_split
 ## ==================================================
 class Preprocess():
     """ Common preprocessing tools """
-    def __init__(self):
+    def __init__(self, threshold=0.95, pos_label=1):
         self.scaler = MinMaxScaler()   
-        self.threshold = 0.5
+        self.threshold = threshold
+        self.pos_label = pos_label
 
     def transform(self, X):
         return self.scaler.transform(X.reshape(-1,1)).reshape(X.shape)
@@ -24,19 +25,36 @@ class Preprocess():
             data = np.expand_dims(data, -1)
         return self.transform(data.astype("float32"))   
 
-    def get_labels(self, X):
+    def get_labels(self, X, normalize=False):
         """ Determine labels on a matrix of probabilities p \in [0,1]:
             label = 1 if p > threshold else 0. """
-        return np.where(X > self.threshold, 1., 0.)
+        if normalize:
+            X = self.normalize(X)
+        if self.pos_label:
+            cut = np.quantile(X, q=self.threshold)
+            return (X > cut).astype('int')
+        else:
+            cut = np.quantile(X, q=1-self.threshold)
+            return (X < cut).astype('int')
+
+    def generate_data(self, data, normalize=True):
+        return self.normalize(data) if normalize else data, \
+                self.get_labels(data,normalize)
 
 ## ==================================================
 #
 # MNIST Data Loader Class: From Keras-io
 #
 class MNIST_digits(Preprocess):
-    def __init__(self, input_path='', training_images_filepath='',training_labels_filepath='', \
-                 test_images_filepath='', test_labels_filepath=''):
-        super().__init__()
+    def __init__(self, input_path='', 
+                 training_images_filepath='',
+                 training_labels_filepath='', 
+                 test_images_filepath='', 
+                 test_labels_filepath='',
+                 threshold=0.5,
+                 pos_label=1
+                 ):
+        super().__init__(threshold=threshold, pos_label=pos_label)
 
         def join(string1, string2):
             return os.path.join(input_path,string1) \
@@ -103,8 +121,9 @@ def show_images(images, title_texts):
 ## ==================================================
 class MNIST_letters(Preprocess):
     """ Handles loading, scaling and preprocessing of MNIST handwritten letters """
-    def __init__(self, url, edge_letters=True):
-        super().__init__()
+    def __init__(self, url,threshold=0.5, pos_label=1,edge_letters=True):
+                                 
+        super().__init__(threshold=threshold, pos_label=pos_label)
 
         # Load Hand-written alphabet images for input url (path)
         self.df = pd.read_csv(url)
@@ -136,12 +155,3 @@ class MNIST_letters(Preprocess):
 
         return (x_train, y_train), (x_test, y_test)
 
-#     def transform(self, X):
-#         return self.scaler.transform(X.reshape(-1,1)).reshape(X.shape)
-# 
-#     def inverse_transform(self, X):
-#         return self.scaler.inverse_transform(X.reshape(-1,1)).reshape(X.shape)
-# 
-#     def normalize(self, data):
-#         data = np.expand_dims(data, -1).astype("float32")
-#         return self.transform(data)
