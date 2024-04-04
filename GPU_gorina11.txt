@@ -3,3 +3,5 @@ ssh1.ux.uis.no
 gorina11.ux.uis.no
 
 /nfs/student/jinghou
+
+/home/stud/u271961
