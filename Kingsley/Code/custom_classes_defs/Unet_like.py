@@ -103,6 +103,6 @@ class UNET2D(model_config):
             padding="same"
         )(x)
 
-        return keras.Model(inputs, outputs)
+        return keras.Model(inputs, outputs, name="U-NET")
     
     

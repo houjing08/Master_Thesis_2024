@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import time
 import json
+import cv2
 from os.path import join
 import matplotlib.pyplot as plt
 from sklearn.metrics import classification_report, average_precision_score
@@ -27,7 +28,7 @@ class model_config(keras.Model):
             channels_dim=(1,1),     # i/o
             augmentation=False,
             scaling=255.,
-            threshold=0.95,
+            threshold=0.5,
             pos_label=1,
             **kwargs
         ):
@@ -38,15 +39,15 @@ class model_config(keras.Model):
                                   shuffle=shuffle, verbose=verbose)
         self.new_training_session = new_training_session
         self.save_path = save_path
+        self.threshold = threshold
+        self.pos_label = pos_label
 
         self.model_arch=dict(
             img_shape=img_shape, 
             target_size=target_size, 
             channels_dim=channels_dim,
             scaling=scaling,
-            augmentation=augmentation,
-            threshold=threshold,
-            pos_label=pos_label
+            augmentation=augmentation
         )
         self.update_model_arch(self.model_arch)
     
@@ -69,8 +70,6 @@ class model_config(keras.Model):
                 self.channels_dim = model_arch['channels_dim']
                 self.scaling = model_arch['scaling']
                 self.augmentation = model_arch['augmentation']
-                self.threshold = model_arch['threshold']
-                self.pos_label = model_arch['pos_label']
             except KeyError:
                 print(f'Unown key passed for model_arch!')
     
@@ -80,7 +79,9 @@ class model_config(keras.Model):
             ('training_args', self.training_args),
             ('model_arch', self.model_arch),
             ('new_training_session', self.new_training_session),
-            ('save_path', self.save_path)
+            ('save_path', self.save_path),
+            ('threshold', self.threshold),
+            ('pos_label', self.pos_label)
         ]:
             if isinstance(value,dict):
                 print("{:>20}:".format(param))
@@ -120,15 +121,15 @@ class model_config(keras.Model):
                 self.new_training_session = False
 
 
-    def predict(self, x_test, source='images', target='images'):
+    # def predict(self, x_test, source='images', target='images'):
 
-        if (source=='codes' and target=='images'):
-            return self.decoder.predict(x_test)
+    #     if (source=='codes' and target=='images'):
+    #         return self.decoder.predict(x_test)
 
-        elif (source=='images' and target=='codes'):
-            return self.encoder.predict(x_test)
+    #     elif (source=='images' and target=='codes'):
+    #         return self.encoder.predict(x_test)
 
-        return self.autoencoder.predict(x_test) 
+    #     return self.autoencoder.predict(x_test) 
 
     def evaluate_sklearn(self, y_true, y_pred, report=False):
         """ 
@@ -231,8 +232,8 @@ class model_config(keras.Model):
                 [
                     layers.RandomFlip('horizontal'),
                     layers.RandomContrast(factor=0.2),
-                    layers.RandomRotation(factor=0.2, value_range=(0,self.scaling)),
-                    layers.RandomBrightness(factor=0.2, value_range=(0,self.scaling)),
+                    layers.RandomRotation(factor=0.2), # value_range=(0,self.scaling)),
+                    layers.RandomBrightness(factor=0.2), # value_range=(0,self.scaling)),
                     layers.RandomFlip('vertical')
                 ]
             )
