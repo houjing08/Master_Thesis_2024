@@ -9,6 +9,8 @@ import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
 
+# from tensorflow import ops
+
 from tensorflow import data as tf_data
 from tensorflow import image as tf_image
 from tensorflow import io as tf_io

@@ -1,5 +1,7 @@
 from custom_classes_defs.setup import *
 
+import re
+
 ## ===================================================
 class HED2D(model_config):
     """
@@ -7,11 +9,12 @@ class HED2D(model_config):
     Cf. Xie & Tu (2015)
     Uses VGG16 as backbone network
     """
-    def __init__(self,  vgg16_path=None, model_arch=None, **kwargs):
+    def __init__(self,  vgg16_path=None, num_freeze=4, model_arch=None, **kwargs):
         """
         @params:
         img_shape : shape of image including panel dimension
-        resnet50_path : path to pretrained model (resnet50)
+        vgg16_path : path to pretrained model (vgg16)
+        num_freeze : number of convolutional base blocks to freeze (0-5)
         """
         if model_arch is None:
             super().__init__(**kwargs)
@@ -19,6 +22,7 @@ class HED2D(model_config):
             super().__init__(**model_arch, **kwargs)
 
         self.vgg16_path = vgg16_path
+        self.num_freeze =  min(5, max(0, int(num_freeze)))
         self.Name = 'hed'
 
 
@@ -76,5 +80,12 @@ class HED2D(model_config):
             padding="same"
         )(x)
 
-        return keras.Model(inputs, outputs, name="HED")
+        model =  keras.Model(inputs, outputs, name="HED")
+
+        # Enforce transfer learning
+        for ly in model.layers:
+            if re.search(f'block[0-{self.num_freeze}]', ly.name):
+                ly.trainable = False
+
+        return model
     
