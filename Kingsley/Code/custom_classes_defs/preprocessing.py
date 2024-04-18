@@ -17,7 +17,7 @@ from tensorflow import io as tf_io
 
 
 from IPython.display import Image, display
-from keras.utils import load_img, array_to_img
+from keras.utils import load_img, array_to_img #, img_to_array
 from PIL import ImageOps
 
 ## ==================================================
@@ -178,6 +178,8 @@ class MNIST_letters(Preprocess):
     def __init__(self, url,threshold=0.5, pos_label=1,edge_letters=True):
                                  
         super().__init__(threshold=threshold, pos_label=pos_label)
+        self.threshold = threshold
+        self.pos_label = pos_label
 
         # Load Hand-written alphabet images for input url (path)
         self.df = pd.read_csv(url)
@@ -205,9 +207,10 @@ class MNIST_letters(Preprocess):
         x_test = np.array([x.reshape(img_dim,img_dim) for x in x_test])
 
         if abs(val_ratio) > 0:
-            # take fraction of training data for validation
-            x_train, x_val, y_train, y_val = \
-            train_test_split(x_train, y_train, test_size=val_ratio)
+            # take fraction of remaining data for validation
+            test_ratio = val_ratio / (1-train_ratio)
+            x_test, x_val, y_test, y_val = \
+            train_test_split(x_test, y_test, test_size=test_ratio)
             return (x_train, y_train), (x_test, y_test), (x_val, y_val)
 
         return (x_train, y_train), (x_test, y_test)
@@ -281,51 +284,119 @@ class Oxford_Pets(Preprocess):
         """ 
         Extracts and splits data into training and validation sets 
         train_ratio = fraction of entire data
-        val_ratio = fraction of training data
+        val_ratio = fraction of entire data
         """
         L = len(self.input_img_paths)
         train_samples = int(train_ratio*L)
-        val_samples = int(val_ratio*train_samples)
+        val_samples = int(val_ratio*L)
 
         random.Random(seed).shuffle(self.input_img_paths)
         random.Random(seed).shuffle(self.target_img_paths)
-        self.train_input_img_paths = self.input_img_paths[:train_samples][:-val_samples]
-        self.train_target_img_paths = self.target_img_paths[:train_samples][:-val_samples]
-        self.val_input_img_paths = self.input_img_paths[:train_samples][-val_samples:]
-        self.val_target_img_paths = self.target_img_paths[:train_samples][-val_samples:]
-        self.test_input_img_paths = self.input_img_paths[train_samples:]
-        self.test_target_img_paths = self.target_img_paths[train_samples:]
+        self.train_input_img_paths = self.input_img_paths[:train_samples]
+        self.train_target_img_paths = self.target_img_paths[:train_samples]
+        self.val_input_img_paths = self.input_img_paths[train_samples:][:val_samples]
+        self.val_target_img_paths = self.target_img_paths[train_samples:][:val_samples]
+        self.test_input_img_paths = self.input_img_paths[train_samples:][val_samples:]
+        self.test_target_img_paths = self.target_img_paths[train_samples:][val_samples:]
 
         # Instantiate dataset for each split
-        # Limit input files in `max_dataset_len` for faster epoch training time.
-        # Remove the `max_dataset_len` arg when running with full dataset.
         train_dataset = self.get_dataset(self.train_input_img_paths, self.train_target_img_paths)
         valid_dataset = self.get_dataset(self.val_input_img_paths, self.val_target_img_paths)
         test_dataset = self.get_dataset(self.test_input_img_paths, self.test_target_img_paths)
         return train_dataset, valid_dataset, test_dataset
+    
+    def plot_multiple(self, img_path, idx, rows, num_images, count):
+        for col in range(num_images):
+            plt.subplot(rows, num_images, count)
+            plt.axis('off')
+            if isinstance(img_path, list):
+                # img = Image(filename=img_path[idx[col]])
+                img = cv2.imread(filename=img_path[idx[col]])
+                img = tf_image.resize(img, self.img_size, method="nearest")
+                plt.imshow(img)
+            else: # numpy array (img_path=y_pred)
+                mask = np.argmax(img_path[idx[col]], axis=-1)
+                mask = np.expand_dims(mask, axis=-1) * 127.5
+                img = ImageOps.autocontrast(array_to_img(mask))
+                #display(img)
+                plt.imshow(img,cmap='gray')
+            count = count + 1
+        return count
 
-    def display_sample_image(self, y_pred, image_id=0, validation='val'):
+    def display_sample_image(self, y_pred, validation='val'):
         """Quick utility to display a model's prediction."""
+        num_images = 4
+        idx = np.random.choice(np.arange(len(y_pred)), num_images)
         if validation.lower()=='val':
-            img_path = self.val_input_img_paths[image_id]
-            target_path = self.val_target_img_paths[image_id]
+            img_path = self.val_input_img_paths
+            target_path = self.val_target_img_paths
         elif validation.lower()=='test':
-            img_path = self.test_input_img_paths[image_id]
-            target_path = self.test_target_img_paths[image_id]
+            img_path = self.test_input_img_paths
+            target_path = self.test_target_img_paths
         else:
-            img_path = self.train_input_img_paths[image_id]
-            target_path = self.train_target_img_paths[image_id]
+            img_path = self.train_input_img_paths
+            target_path = self.train_target_img_paths
 
+        plt.figure(figsize=(30,20)) 
+        rows = 3
+        count = 1
         # Display input image
-        display(Image(filename=img_path))
+        count = self.plot_multiple(img_path, idx, rows, num_images, count)
 
         # Display ground-truth target mask
-        img = ImageOps.autocontrast(load_img(target_path))
-        display(img)
-
-        mask = np.argmax(y_pred[image_id], axis=-1)
-        mask = np.expand_dims(mask, axis=-1)
-        img = ImageOps.autocontrast(array_to_img(mask))
+        count = self.plot_multiple(target_path, idx, rows, num_images, count)
 
         # Display mask predicted by our model
-        display(img)
+        count = self.plot_multiple(y_pred, idx, rows, num_images, count)
+        plt.subplots_adjust(hspace=0)
+
+
+## ==================================================
+class Thebe(Preprocess):
+    """ Handles loading of Thebe seismic data and labels into tf.datasets:
+        training, validation and test datasets.
+        Data stored as numpy array in npy format in some url (path).
+      """
+    def __init__(self, 
+                seismic_url, annotations_url, batch_size,
+                threshold=0.5, pos_label=1, seed=None
+        ):
+                                 
+        super().__init__(threshold=threshold, pos_label=pos_label)
+        self.threshold = threshold
+        self.pos_label = pos_label
+        self.seismic_url = seismic_url
+        self.annotations_url = annotations_url
+        self.seed = seed
+        self.batch_size = batch_size
+
+    def load_img_masks(self, imgs_paths, labels_paths):
+        imgs, labels = [], []
+        for img, label in zip(imgs_paths, labels_paths):
+            X = np.load(img)
+            y = np.load(label)
+            imgs.append(X.astype('float32'))
+            labels.append(y.astype('unit8'))
+        return imgs, labels
+
+    
+    def data_generator(self, sub_group='train', as_numpy=False):
+        """ 
+        Extracts and splits data into training and validation sets 
+        train_ratio = fraction of entire data
+        val_ratio = fraction of entire data
+        """
+        path_to_imgs = join(self.seismic_url, sub_group)
+        path_to_labels = join(self.annotations_url, sub_group)
+        imgs_paths = sorted(os.listdir(path_to_imgs))
+        labels_paths = sorted(os.listdir(path_to_labels))
+
+        random.Random(self.seed).shuffle(imgs_paths)
+        random.Random(self.seed).shuffle(labels_paths)
+
+        if as_numpy:
+            return self.load_img_masks(imgs_paths, labels_paths)
+        dataset = tf_data.Dataset.from_tensor_slices((imgs_paths, labels_paths))
+        dataset = dataset.map(self.load_img_masks, num_parallel_calls=tf_data.AUTOTUNE)
+
+        return dataset.batch(self.batch_size)
