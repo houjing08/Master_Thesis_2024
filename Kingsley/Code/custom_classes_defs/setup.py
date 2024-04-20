@@ -5,8 +5,9 @@ from keras import layers
 import numpy as np
 import pandas as pd
 import time
-import json
-import cv2
+# import json
+import pickle
+# import cv2
 from os.path import join
 import matplotlib.pyplot as plt
 from sklearn.metrics import classification_report, average_precision_score
@@ -30,6 +31,7 @@ class model_config(keras.Model):
             scaling=255.,
             threshold=0.5,
             pos_label=1,
+            mixed_precision=None,
             **kwargs
         ):
         super().__init__(**kwargs)
@@ -41,6 +43,14 @@ class model_config(keras.Model):
         self.save_path = save_path
         self.threshold = threshold
         self.pos_label = pos_label
+        self.mixed_precision = mixed_precision
+
+        if mixed_precision:
+            # Necessary to speed up computations on GPU
+            if isinstance(mixed_precision, str):
+                keras.mixed_precision.set_global_policy(mixed_precision)
+            else:
+                keras.mixed_precision.set_global_policy("mixed_float16")
 
         self.model_arch=dict(
             img_shape=img_shape, 
@@ -72,8 +82,10 @@ class model_config(keras.Model):
                 self.augmentation = model_arch['augmentation']
             except KeyError:
                 print(f'Unown key passed for model_arch!')
+
     
-    def info(self):
+    def info(self, prettyprint=True):
+        text = []
         for param, value in [
             ('compile_args', self.compile_args),
             ('training_args', self.training_args),
@@ -83,15 +95,34 @@ class model_config(keras.Model):
             ('threshold', self.threshold),
             ('pos_label', self.pos_label)
         ]:
-            if isinstance(value,dict):
-                print("{:>20}:".format(param))
+            if isinstance(value, dict):
+                text.append("{:>20}:".format(param))
                 for k, v in value.items():
                     if isinstance(v, (str,bool,int,float,tuple)):
-                        print("{:>30}: {}".format(k, v))
+                        text.append("{:>30}: {}".format(k, v))
+                    elif isinstance(v, list):
+                        l = min(len(v),10)
+                        text.append("{:>30}: {}".format(k, v[0]))
+                        for val in v[1:l]:
+                            text.append("{:>30}: {}".format('', val))
                     else:
-                        print("{:>30}: {}".format(k, type(v)))
+                        text.append("{:>30}: {}".format(k, type(v)))
             else:
-                print("{:>20}: {}".format(param, value))
+                text.append("{:>20}: {}".format(param, value))
+        text = '\n'.join(text)
+        if prettyprint:
+            print(text)
+        else:
+            return text
+        
+    def double_check(self, interactive=True):
+        """ Cross-examine some setup parameters """
+        if interactive:
+            train = input("New train session? (y/n): ")
+            if train[0].lower()=='y':
+                self.new_training_session = True
+            else:
+                self.new_training_session = False
 
     def execute_training(self, model, data, saveas='model',
                           metrics=['loss','val_loss'], plot_history=True ):
@@ -102,23 +133,30 @@ class model_config(keras.Model):
             history = model.fit(data, **self.training_args)
             print('training elapsed time: ___{:5.2f} minutes___'.format((time.time()-start) / 60))
             print('...training completed!')
-            model.save_weights(join(self.save_path, saveas+'.weights.h5'))
-            with open(join(self.save_path, saveas+'_history.json'), "w") as fp:
-                json.dump(history.history, fp)
             if plot_history:
                 show_convergence(history.history, metrics=metrics)
+            model.save_weights(join(self.save_path, saveas+'.weights.h5'))
+            with open(join(self.save_path, saveas+'_info.txt'), "w") as fp:
+                fp.write(self.info(0))
+            try:
+                with open(join(self.save_path, saveas+'_history.pickle'), "wb") as fp:
+                    pickle.dump(history, fp)
+            except TypeError:
+                print(f"Error writing {saveas+'_history.pickle'}!")
         else:
             try:
                 model.load_weights(join(self.save_path, saveas+'.weights.h5'))
-                with open(join(self.save_path, saveas+'_history.json'), "r") as fp:
-                    history = json.load(fp)
+                with open(join(self.save_path, saveas+'_history.pickle'), "rb") as fp:
+                    history = pickle.load(fp)
                 print(f"model weights  ({saveas}.weights.h5) and train history loaded!")
+                print(open(join(self.save_path, saveas+'_info.txt'),'r').read())
                 if plot_history:
-                    show_convergence(history, metrics=metrics)
+                    show_convergence(history.history, metrics=metrics)
             except FileNotFoundError:
                 self.new_training_session = True
                 self.execute_training(model, data, saveas)
                 self.new_training_session = False
+        return history
 
 
     # def predict(self, x_test, source='images', target='images'):
@@ -272,12 +310,12 @@ def show_convergence(history, metrics='loss'):
                 print(f'cannot find {metric} in history')
         plt.legend()
         plt.xlabel('epoch')
-        plt.ylabel('loss')
+        plt.ylabel(metrics[0])
         plt.show()
     elif metrics in history:
         plt.plot(history[metrics])
         plt.xlabel('epoch')
-        plt.ylabel('loss')
+        plt.ylabel(metrics)
         plt.show()
     else:
         print(f'cannot find {metrics} in history')
