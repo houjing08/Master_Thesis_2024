@@ -32,6 +32,7 @@ class model_config(keras.Model):
             threshold=0.5,
             pos_label=1,
             mixed_precision=None,
+            multiple_gpu_device=None,
             **kwargs
         ):
         super().__init__(**kwargs)
@@ -127,7 +128,7 @@ class model_config(keras.Model):
     def execute_training(self, model, data, saveas='model',
                           metrics=['loss','val_loss'], plot_history=True ):
         if self.new_training_session:
-            model.compile(**self.compile_args)
+            # model.compile(**self.compile_args)
             print('Model training...')
             start = time.time()
             history = model.fit(data, **self.training_args)
