@@ -355,8 +355,8 @@ class Oxford_Pets(Preprocess):
         # Display mask predicted by our model
         count = self.plot_multiple(y_pred, idx, rows, num_images, count)
         plt.subplots_adjust(hspace=0)
-
-
+    
+    
 ## ==================================================
 class Thebe(Preprocess):
     """ Handles loading of Thebe seismic data and labels into tf.datasets:
@@ -377,14 +377,10 @@ class Thebe(Preprocess):
         self.batch_size = batch_size
 
     def load_img_masks(self, imgs_paths, labels_paths):
-        imgs = np.concatenate(
-            [np.load(img).astype('float32') for img in imgs_paths]
-        )
-        labels = np.concatenate(
-            [np.load(label).astype('float32') for label in labels_paths]
-        )
+        imgs = np.stack([np.load(img).astype('float32') for img in imgs_paths])
+        labels = np.stack([np.load(label).astype('float32') for label in labels_paths])
+        
         return imgs, labels
-
     
     def data_generator(self, sub_group='train', as_numpy=False):
         """ 
@@ -394,15 +390,15 @@ class Thebe(Preprocess):
         """
         path_to_imgs = join(self.seismic_url, sub_group)
         path_to_labels = join(self.annotations_url, sub_group)
-        imgs_paths = sorted(os.listdir(path_to_imgs))
-        labels_paths = sorted(os.listdir(path_to_labels))
+        imgs_paths =  [(path_to_imgs + '/'+ s) for s in sorted(os.listdir(path_to_imgs))]
+        labels_paths = [(path_to_labels + '/'+ s) for s in sorted(os.listdir(path_to_labels))]
 
         random.Random(self.seed).shuffle(imgs_paths)
         random.Random(self.seed).shuffle(labels_paths)
-
+        
+        X, y = self.load_img_masks(imgs_paths, labels_paths)
         if as_numpy:
-            return self.load_img_masks(imgs_paths, labels_paths)
-        dataset = tf_data.Dataset.from_tensor_slices((imgs_paths, labels_paths))
-        dataset = dataset.map(self.load_img_masks, num_parallel_calls=tf_data.AUTOTUNE)
-
+            return X,y
+        dataset = tf_data.Dataset.from_tensor_slices((X, y))
+        #dataset = dataset.map(self.load_img_masks, num_parallel_calls=tf_data.AUTOTUNE)
         return dataset.batch(self.batch_size)
