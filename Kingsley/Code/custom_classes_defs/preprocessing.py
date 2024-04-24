@@ -17,7 +17,7 @@ from tensorflow import io as tf_io
 
 
 from IPython.display import Image, display
-from keras.utils import load_img, array_to_img #, img_to_array
+from keras.utils import load_img, array_to_img , img_to_array
 from PIL import ImageOps
 
 ## ==================================================
@@ -75,9 +75,13 @@ class Preprocess():
     #         return (X < self.threshold).astype('int')
 
 
-    def generate_data(self, data, normalize=True):
-        return self.normalize(data) if normalize else data, \
+    def data_generator(self, data, batch_size=1, normalize=True, as_numpy=False):
+        X, y =  self.normalize(data) if normalize else data, \
                 self.get_labels(data,normalize)
+        if not(as_numpy):
+            return X, y
+        dataset = tf_data.Dataset.from_tensor_slices((X,y)).batch(batch_size)
+        return dataset
     
     def Otsu_thresholding(self, X):
         img = X.astype('uint8')
@@ -143,8 +147,12 @@ class MNIST_digits(Preprocess):
         return images, labels
             
     def load_data(self):
-        x_train, y_train = self.read_images_labels(self.training_images_filepath, self.training_labels_filepath)
-        x_test, y_test = self.read_images_labels(self.test_images_filepath, self.test_labels_filepath)
+        x_train, y_train = self.read_images_labels(
+            self.training_images_filepath,self.training_labels_filepath
+        )
+        x_test, y_test = self.read_images_labels(
+            self.test_images_filepath, self.test_labels_filepath
+        )
 
         min_val = np.min(x_train)
         max_val = np.max(x_train)
@@ -269,13 +277,9 @@ class Oxford_Pets(Preprocess):
         target_img -= 1
         return input_img, target_img
 
-    def get_dataset(self, input_img_paths, target_img_paths, max_dataset_len=None):
+    def data_generator(self, input_img_paths, target_img_paths):
         """Returns a TF Dataset."""
 
-        # For faster debugging, limit the size of data
-        # if max_dataset_len:
-        #     input_img_paths = input_img_paths[:max_dataset_len]
-        #     target_img_paths = target_img_paths[:max_dataset_len]
         dataset = tf_data.Dataset.from_tensor_slices((input_img_paths, target_img_paths))
         dataset = dataset.map(self.load_img_masks, num_parallel_calls=tf_data.AUTOTUNE)
         return dataset.batch(self.batch_size)
@@ -292,26 +296,28 @@ class Oxford_Pets(Preprocess):
 
         random.Random(seed).shuffle(self.input_img_paths)
         random.Random(seed).shuffle(self.target_img_paths)
-        self.train_input_img_paths = self.input_img_paths[:train_samples]
-        self.train_target_img_paths = self.target_img_paths[:train_samples]
-        self.val_input_img_paths = self.input_img_paths[train_samples:][:val_samples]
-        self.val_target_img_paths = self.target_img_paths[train_samples:][:val_samples]
-        self.test_input_img_paths = self.input_img_paths[train_samples:][val_samples:]
-        self.test_target_img_paths = self.target_img_paths[train_samples:][val_samples:]
+        self.train_input_paths = self.input_img_paths[:train_samples]
+        self.train_target_paths = self.target_img_paths[:train_samples]
+        self.val_input_paths = self.input_img_paths[train_samples:][:val_samples]
+        self.val_target_paths = self.target_img_paths[train_samples:][:val_samples]
+        self.test_input_paths = self.input_img_paths[train_samples:][val_samples:]
+        self.test_target_paths = self.target_img_paths[train_samples:][val_samples:]
 
         # Instantiate dataset for each split
-        train_dataset = self.get_dataset(self.train_input_img_paths, self.train_target_img_paths)
-        valid_dataset = self.get_dataset(self.val_input_img_paths, self.val_target_img_paths)
-        test_dataset = self.get_dataset(self.test_input_img_paths, self.test_target_img_paths)
+        train_dataset = self.data_generator(self.train_input_paths, self.train_target_paths)
+        valid_dataset = self.data_generator(self.val_input_paths, self.val_target_paths)
+        test_dataset = self.data_generator(self.test_input_paths, self.test_target_paths)
         return train_dataset, valid_dataset, test_dataset
     
-    def plot_multiple(self, img_path, idx, rows, num_images, count):
+    def plot_multiple(self, img_path, idx, rows, num_images, count, mask=False):
         for col in range(num_images):
             plt.subplot(rows, num_images, count)
             plt.axis('off')
             if isinstance(img_path, list):
-                # img = Image(filename=img_path[idx[col]])
-                img = cv2.imread(filename=img_path[idx[col]])
+                img = ImageOps.autocontrast(load_img(img_path[idx[col]])) \
+                            if mask else \
+                        Image(filename=img_path[idx[col]])
+                # img = cv2.imread(filename=img_path[idx[col]])
                 img = tf_image.resize(img, self.img_size, method="nearest")
                 plt.imshow(img)
             else: # numpy array (img_path=y_pred)
@@ -328,14 +334,14 @@ class Oxford_Pets(Preprocess):
         num_images = 4
         idx = np.random.choice(np.arange(len(y_pred)), num_images)
         if validation.lower()=='val':
-            img_path = self.val_input_img_paths
-            target_path = self.val_target_img_paths
+            img_path = self.val_input_paths
+            target_path = self.val_target_paths
         elif validation.lower()=='test':
-            img_path = self.test_input_img_paths
-            target_path = self.test_target_img_paths
+            img_path = self.test_input_paths
+            target_path = self.test_target_paths
         else:
-            img_path = self.train_input_img_paths
-            target_path = self.train_target_img_paths
+            img_path = self.train_input_paths
+            target_path = self.train_target_paths
 
         plt.figure(figsize=(30,20)) 
         rows = 3
@@ -344,7 +350,7 @@ class Oxford_Pets(Preprocess):
         count = self.plot_multiple(img_path, idx, rows, num_images, count)
 
         # Display ground-truth target mask
-        count = self.plot_multiple(target_path, idx, rows, num_images, count)
+        count = self.plot_multiple(target_path, idx, rows, num_images, count, mask=True)
 
         # Display mask predicted by our model
         count = self.plot_multiple(y_pred, idx, rows, num_images, count)
@@ -371,12 +377,12 @@ class Thebe(Preprocess):
         self.batch_size = batch_size
 
     def load_img_masks(self, imgs_paths, labels_paths):
-        imgs, labels = [], []
-        for img, label in zip(imgs_paths, labels_paths):
-            X = np.load(img)
-            y = np.load(label)
-            imgs.append(X.astype('float32'))
-            labels.append(y.astype('unit8'))
+        imgs = np.concatenate(
+            [np.load(img).astype('float32') for img in imgs_paths]
+        )
+        labels = np.concatenate(
+            [np.load(label).astype('float32') for label in labels_paths]
+        )
         return imgs, labels
 
     

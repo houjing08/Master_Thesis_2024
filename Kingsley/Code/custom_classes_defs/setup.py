@@ -1,13 +1,17 @@
 import tensorflow as tf
 import keras
 from keras import layers
+import keras.backend as KB
 
 import numpy as np
+from IPython.display import display
+from glob import glob
 import pandas as pd
 import time
 # import json
 import pickle
 # import cv2
+import os
 from os.path import join
 import matplotlib.pyplot as plt
 from sklearn.metrics import classification_report, average_precision_score
@@ -20,7 +24,7 @@ class model_config(keras.Model):
             loss='binary_crossentropy', 
             epochs=1,
             batch_size=1, 
-            shuffle=True, 
+            shuffle=False, 
             verbose=0,
             new_training_session=False,
             save_path='',
@@ -33,6 +37,7 @@ class model_config(keras.Model):
             pos_label=1,
             mixed_precision=None,
             multiple_gpu_device=None,
+            training_duration=None,
             **kwargs
         ):
         super().__init__(**kwargs)
@@ -44,7 +49,10 @@ class model_config(keras.Model):
         self.save_path = save_path
         self.threshold = threshold
         self.pos_label = pos_label
+        self.labels = list(range(max(channels_dim[1],2)))
         self.mixed_precision = mixed_precision
+        self.multiple_gpu_device = multiple_gpu_device
+        self.training_duration = training_duration
 
         if mixed_precision:
             # Necessary to speed up computations on GPU
@@ -71,7 +79,6 @@ class model_config(keras.Model):
             for key,value in kwargs.items():
                 self.training_args[key] = value
 
-
     def update_model_arch(self, model_arch):
         """ Update model architecture parameters """
         if isinstance(model_arch, dict):
@@ -94,7 +101,11 @@ class model_config(keras.Model):
             ('new_training_session', self.new_training_session),
             ('save_path', self.save_path),
             ('threshold', self.threshold),
-            ('pos_label', self.pos_label)
+            ('pos_label', self.pos_label),
+            ('labels', self.labels),
+            ('mixed_precision', self.mixed_precision),
+            ('multiple_gpu_device', self.multiple_gpu_device),
+            ('training_duration (mins)', self.training_duration)
         ]:
             if isinstance(value, dict):
                 text.append("{:>20}:".format(param))
@@ -126,17 +137,20 @@ class model_config(keras.Model):
                 self.new_training_session = False
 
     def execute_training(self, model, data, saveas='model',
-                          metrics=['loss','val_loss'], plot_history=True ):
+                          metrics=['loss','val_loss'], plot_history=True):
+        
         if self.new_training_session:
-            # model.compile(**self.compile_args)
+            for chkpt in glob(self.save_path+'/*.h5'):
+                os.remove(chkpt)
             print('Model training...')
             start = time.time()
             history = model.fit(data, **self.training_args)
-            print('training elapsed time: ___{:5.2f} minutes___'.format((time.time()-start) / 60))
+            self.training_duration = f'{(time.time()-start) / 60:.2f}'
+            print('training elapsed time: ___{:5}___ minutes'.format(self.training_duration))
             print('...training completed!')
+
             if plot_history:
                 show_convergence(history.history, metrics=metrics)
-            model.save_weights(join(self.save_path, saveas+'.weights.h5'))
             with open(join(self.save_path, saveas+'_info.txt'), "w") as fp:
                 fp.write(self.info(0))
             try:
@@ -144,31 +158,60 @@ class model_config(keras.Model):
                     pickle.dump(history, fp)
             except TypeError:
                 print(f"Error writing {saveas+'_history.pickle'}!")
+
         else:
+
             try:
-                model.load_weights(join(self.save_path, saveas+'.weights.h5'))
                 with open(join(self.save_path, saveas+'_history.pickle'), "rb") as fp:
                     history = pickle.load(fp)
-                print(f"model weights  ({saveas}.weights.h5) and train history loaded!")
+                print(f"model train history '{saveas}+_history.pickle'loaded!")
                 print(open(join(self.save_path, saveas+'_info.txt'),'r').read())
                 if plot_history:
                     show_convergence(history.history, metrics=metrics)
             except FileNotFoundError:
-                self.new_training_session = True
-                self.execute_training(model, data, saveas)
-                self.new_training_session = False
-        return history
+                print('No saved model/weights found!')
+                model, history = None, None
 
+        best_model_track = sorted(glob(self.save_path+'/*.h5'))
+        if len(best_model_track):
+            model.load_weights(best_model_track[0])
 
-    # def predict(self, x_test, source='images', target='images'):
+        return model, history
 
-    #     if (source=='codes' and target=='images'):
-    #         return self.decoder.predict(x_test)
+    def callbacks(self):
+        """ Define of callback methods to use for training (hard-coded params!)"""
+        earlystopping = keras.callbacks.EarlyStopping(
+            monitor="accuracy",
+            patience=10,
+            restore_best_weights=True
+        )
 
-    #     elif (source=='images' and target=='codes'):
-    #         return self.encoder.predict(x_test)
+        reduce_lr_on_plateau = keras.callbacks.ReduceLROnPlateau(
+            monitor='val_accuracy', 
+            factor=0.5, 
+            patience=5, 
+            min_lr=1e-6,
+            verbose=1
+        )
 
-    #     return self.autoencoder.predict(x_test) 
+        checkpoint = keras.callbacks.ModelCheckpoint(
+            os.path.join(self.save_path, "chkpt-{val_loss:.4f}-{epoch:02d}.weights.h5"), 
+            save_weights_only=True,
+            save_best_only=True
+        )
+
+        schedule_lr = keras.callbacks.LearningRateScheduler(
+            lambda epoch, lr: lr * KB.exp(-0.1) if (epoch > 10) else lr,
+            verbose=1
+        )
+
+        callback_list = [
+            reduce_lr_on_plateau,
+            checkpoint,
+            # schedule_lr,
+            earlystopping
+        ]
+        return callback_list
 
     def evaluate_sklearn(self, y_true, y_pred, report=False):
         """ 
@@ -184,45 +227,31 @@ class model_config(keras.Model):
             - OIS score (F1-score based on per image thresholding)
         """
         eval_time = time.time()
-        neg_label = int(not(self.pos_label))
         y_true = y_true.flatten()
-        AP = average_precision_score(y_true, y_pred.flatten(), pos_label=self.pos_label)
+        y = y_pred.reshape(-1,self.channels_dim[1])
+        AP = average_precision_score(y_true, y, pos_label=self.pos_label)
 
-        # ODS
-        y_true = y_true.astype(bool)
-        labels = [bool(neg_label), bool(self.pos_label)]
-
-        if self.pos_label:
+        # ODS (single threshold for all images)
+        if self.pos_label and self.channels_dim[1]==1:
             cut = np.quantile(y_pred, q=self.threshold)
-            y = (y_pred > cut).flatten()
-        else:
+            y = (y_pred > cut).astype('uint8').flatten()
+        elif self.channels_dim[1]==1:
             cut = np.quantile(y_pred, q=1-self.threshold)
-            y = (y_pred < cut).flatten()
-
-        results = classification_report(y_true, y, output_dict=True, labels=labels)
-        f1_ods = results[str(labels[-1])]['f1-score']
-
-        #OIS
-        if self.pos_label:
-            cuts = np.quantile(y_pred, q=self.threshold, axis=(1,2))
-            cuts = np.expand_dims(np.expand_dims(cuts,-1),-1)
-            y = (y_pred > cuts).flatten()
+            y = (y_pred < cut).astype('uint8').flatten()
         else:
-            cuts = np.quantile(y_pred, q=1-self.threshold, axis=(1,2))
-            cuts = np.expand_dims(np.expand_dims(cuts,-1),-1)
-            y = (y_pred < cuts).flatten()
+            y = np.argmax(y_pred, axis=-1).astype('uint8').flatten()
 
-        results = classification_report(y_true, y, output_dict=True, labels=labels)
-        f1_ois = results[str(labels[-1])]['f1-score'] 
+        results = classification_report(y_true, y, output_dict=True, labels=self.labels)
+        f1_ods = results[str(self.pos_label)]['f1-score']
 
         eval_time = time.time() - eval_time
         print("evaluation elapsed time:___{:5.2f}___minutes" \
                 .format(eval_time/60))
         
         if report:
-            pd.DataFrame(results).round(2).style
+            display(pd.DataFrame(results).round(2))
 
-        return {'Avg-precision': np.round(AP,2), 'f1-score(ODS)':  np.round(f1_ods,2), 'f1-score(OIS)': np.round(f1_ois,2)}
+        return {'Avg-precision': np.round(AP,2), 'f1-score(ODS)':  np.round(f1_ods,2)}
 
 
     def equal(self, shape1, shape2):
@@ -280,9 +309,6 @@ class model_config(keras.Model):
 
 
 
-
-
-
 ## ===================================================
 def display_sample_images(x_test, y, img_shape, n=10, figsize=(20,4), cmap=None):
     n = 10  # How many digits we will display
@@ -321,3 +347,56 @@ def show_convergence(history, metrics='loss'):
     else:
         print(f'cannot find {metrics} in history')
 
+# #################################################################
+#         # from keras.io
+# #################################################################
+       
+# class MyTrainer(keras.Model):
+#     def __init__(self, model):
+#         super().__init__()
+#         self.model = model
+#         # Create loss and metrics here.
+#         self.loss_fn = keras.losses.SparseCategoricalCrossentropy()
+#         self.accuracy_metric = keras.metrics.SparseCategoricalAccuracy()
+
+#     @property
+#     def metrics(self):
+#         # List metrics here.
+#         return [self.accuracy_metric]
+
+#     def train_step(self, data):
+#         x, y = data
+#         with tf.GradientTape() as tape:
+#             y_pred = self.model(x, training=True)  # Forward pass
+#             # Compute loss value
+#             loss = self.loss_fn(y, y_pred)
+
+#         # Compute gradients
+#         trainable_vars = self.trainable_variables
+#         gradients = tape.gradient(loss, trainable_vars)
+
+#         # Update weights
+#         self.optimizer.apply_gradients(zip(gradients, trainable_vars))
+
+#         # Update metrics
+#         for metric in self.metrics:
+#             metric.update_state(y, y_pred)
+
+#         # Return a dict mapping metric names to current value.
+#         return {m.name: m.result() for m in self.metrics}
+
+#     def test_step(self, data):
+#         x, y = data
+
+#         # Inference step
+#         y_pred = self.model(x, training=False)
+
+#         # Update metrics
+#         for metric in self.metrics:
+#             metric.update_state(y, y_pred)
+#         return {m.name: m.result() for m in self.metrics}
+
+#     def call(self, x):
+#         # Equivalent to `call()` of the wrapped keras.Model
+#         x = self.model(x)
+#         return x
