@@ -19,18 +19,21 @@ class FNET2D(model_config):
 
         self.Name = 'fnet'
         self.panel_sizes = panel_sizes
+        self.depth = len(panel_sizes)
 
     def encoder_block(self, x, previous_block_activation, panel_sizes,block):
 
         for i, filters in enumerate(panel_sizes):
             x = layers.Activation("relu")(x)
+            # if i == self.depth-1:
             x = layers.Dropout(0.1)(x)
-            x = layers.SeparableConv2D(filters, 3, padding="same")(x)
+            x = layers.Conv2D(filters, 3, padding="same")(x)
             x = layers.BatchNormalization()(x)
 
             x = layers.Activation("relu")(x)
+            # if i == self.depth-1:
             x = layers.Dropout(0.1)(x)
-            x = layers.SeparableConv2D(filters, 3, padding="same")(x)
+            x = layers.Conv2D(filters, 3, padding="same")(x)
             x = layers.BatchNormalization()(x)
 
             x = layers.MaxPooling2D(3, strides=2, padding="same")(x)
@@ -49,11 +52,13 @@ class FNET2D(model_config):
 
         for i, filters in enumerate(panel_sizes[::-1]):
             x = layers.Activation("relu")(x)
-            x = layers.Conv2DTranspose(filters, 3, padding="same")(x)
+            # x = layers.Dropout(0.25)(x)
+            x = layers.Conv2D(filters, 3, padding="same")(x)
             x = layers.BatchNormalization()(x)
 
             x = layers.Activation("relu")(x)
-            x = layers.Conv2DTranspose(filters, 3, padding="same")(x)
+            # x = layers.Dropout(0.25)(x)
+            x = layers.Conv2D(filters, 3, padding="same")(x)
             x = layers.BatchNormalization()(x)
 
             x = layers.UpSampling2D(2)(x)

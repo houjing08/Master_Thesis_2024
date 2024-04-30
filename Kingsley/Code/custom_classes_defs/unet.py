@@ -60,12 +60,12 @@ class UNET2D(model_config):
             # if filters < self.panel_sizes[0]:
             x = layers.Activation("relu")(x)
             x = layers.Dropout(0.25)(x)
-            x = layers.SeparableConv2D(filters, 3, padding="same")(x)
+            x = layers.Conv2D(filters, 3, padding="same")(x)
             x = layers.BatchNormalization()(x)
 
             x = layers.Activation("relu")(x)
             x = layers.Dropout(0.25)(x)
-            x = layers.SeparableConv2D(filters, 3, padding="same")(x)
+            x = layers.Conv2D(filters, 3, padding="same")(x)
             x = layers.BatchNormalization()(x)
 
             x = layers.MaxPooling2D(3, strides=2, padding="same")(x)

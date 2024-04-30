@@ -4,7 +4,7 @@ from keras import layers
 import keras.backend as KB
 
 import numpy as np
-from IPython.display import display
+# from IPython.display import display
 from glob import glob
 import pandas as pd
 import time
@@ -174,28 +174,39 @@ class model_config(keras.Model):
 
         best_model_track = sorted(glob(self.save_path+'/*.h5'))
         if len(best_model_track):
-            model.load_weights(best_model_track[0])
+            mode = best_model_track[0].__contains__('loss')-1
+            model.load_weights(best_model_track[mode])
 
         return model, history
 
-    def callbacks(self):
-        """ Define of callback methods to use for training (hard-coded params!)"""
+    def callbacks(self,
+        es_monitor='accuracy', 
+        lr_monitor='val_accuracy', 
+        chkpt_monitor='val_loss',
+        es_patience=10,
+        lr_patience=10
+    ):
+        """ Define of callback methods to use for training (some params hard-coded!)"""
         earlystopping = keras.callbacks.EarlyStopping(
-            monitor="accuracy",
-            patience=10,
+            monitor=es_monitor,
+            patience=es_patience,
             restore_best_weights=True
         )
 
         reduce_lr_on_plateau = keras.callbacks.ReduceLROnPlateau(
-            monitor='val_accuracy', 
+            monitor=lr_monitor, 
             factor=0.5, 
-            patience=5, 
+            patience=lr_patience, 
             min_lr=1e-6,
             verbose=1
         )
+        filename =  "chkpt-"+chkpt_monitor+"-{val_loss:.4f}-{epoch:02d}.weights.h5"\
+                    if chkpt_monitor.__contains__('loss') else \
+                     "chkpt-"+chkpt_monitor+"-{val_accuracy:.4f}-{epoch:02d}.weights.h5"
 
         checkpoint = keras.callbacks.ModelCheckpoint(
-            os.path.join(self.save_path, "chkpt-{val_loss:.4f}-{epoch:02d}.weights.h5"), 
+            os.path.join(self.save_path, filename), 
+            monitor=chkpt_monitor,
             save_weights_only=True,
             save_best_only=True
         )
@@ -227,8 +238,10 @@ class model_config(keras.Model):
             - OIS score (F1-score based on per image thresholding)
         """
         eval_time = time.time()
+        if hasattr(y_true, 'as_numpy_iterator'): # tensorflow dataset
+            y_true = np.concatenate([a[-1] for a in y_true.as_numpy_iterator()])
         y_true = y_true.flatten()
-        y = y_pred.reshape(-1,self.channels_dim[1])
+        y = y_pred.reshape(-1, self.channels_dim[1])
         AP = average_precision_score(y_true, y, pos_label=self.pos_label)
 
         # ODS (single threshold for all images)
@@ -249,7 +262,7 @@ class model_config(keras.Model):
                 .format(eval_time/60))
         
         if report:
-            display(pd.DataFrame(results).round(2))
+            print(pd.DataFrame(results).round(2))
 
         return {'Avg-precision': np.round(AP,2), 'f1-score(ODS)':  np.round(f1_ods,2)}
 

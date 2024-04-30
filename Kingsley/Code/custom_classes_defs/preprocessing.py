@@ -1,10 +1,12 @@
 import struct, os
 import random
+import time
 import cv2
 from array import array
 from os.path import join
 from matplotlib import pyplot as plt
 import numpy as np
+from glob import glob
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
@@ -16,14 +18,14 @@ from tensorflow import image as tf_image
 from tensorflow import io as tf_io
 
 
-from IPython.display import Image, display
+# from IPython.display import Image, display
 from keras.utils import load_img, array_to_img , img_to_array
 from PIL import ImageOps
 
 ## ==================================================
 class Preprocess():
     """ Common preprocessing tools """
-    def __init__(self, threshold=0.95, pos_label=1):
+    def __init__(self, threshold=0.5, pos_label=1):
         self.scaler = MinMaxScaler()   
         self.threshold = threshold
         self.pos_label = pos_label
@@ -277,19 +279,23 @@ class Oxford_Pets(Preprocess):
         target_img -= 1
         return input_img, target_img
 
-    def data_generator(self, input_img_paths, target_img_paths):
-        """Returns a TF Dataset."""
+    def data_generator(self, input_img_paths, target_img_paths, cache=False):
+        """Returns a TF Dataset.
+        Cache data to memory depending on available GPU memory.
+        """
 
         dataset = tf_data.Dataset.from_tensor_slices((input_img_paths, target_img_paths))
-        dataset = dataset.map(self.load_img_masks, num_parallel_calls=tf_data.AUTOTUNE)
-        return dataset.batch(self.batch_size)
+        dataset = dataset.map(self.load_img_masks, num_parallel_calls=tf_data.AUTOTUNE) \
+                 .batch(self.batch_size)
+        return dataset.cache() if cache else dataset
     
-    def split_data(self, train_ratio = 0.1, val_ratio = 0.1, seed=None):
+    def split_data(self, train_ratio = 0.1, val_ratio = 0.1, seed=None, cache=False):
         """ 
         Extracts and splits data into training and validation sets 
         train_ratio = fraction of entire data
         val_ratio = fraction of entire data
         """
+        start = time.time()
         L = len(self.input_img_paths)
         train_samples = int(train_ratio*L)
         val_samples = int(val_ratio*L)
@@ -304,9 +310,11 @@ class Oxford_Pets(Preprocess):
         self.test_target_paths = self.target_img_paths[train_samples:][val_samples:]
 
         # Instantiate dataset for each split
-        train_dataset = self.data_generator(self.train_input_paths, self.train_target_paths)
-        valid_dataset = self.data_generator(self.val_input_paths, self.val_target_paths)
+        train_dataset = self.data_generator(self.train_input_paths, self.train_target_paths, cache)
+        valid_dataset = self.data_generator(self.val_input_paths, self.val_target_paths, cache)
         test_dataset = self.data_generator(self.test_input_paths, self.test_target_paths)
+        print(f'Data prep. duration: ___{(time.time()-start)/60:.2f}___ minutes.')
+
         return train_dataset, valid_dataset, test_dataset
     
     def plot_multiple(self, img_path, idx, rows, num_images, count, mask=False):
@@ -316,7 +324,7 @@ class Oxford_Pets(Preprocess):
             if isinstance(img_path, list):
                 img = ImageOps.autocontrast(load_img(img_path[idx[col]])) \
                             if mask else \
-                        Image(filename=img_path[idx[col]])
+                        cv2.imread(filename=img_path[idx[col]])
                 # img = cv2.imread(filename=img_path[idx[col]])
                 img = tf_image.resize(img, self.img_size, method="nearest")
                 plt.imshow(img)
@@ -355,8 +363,8 @@ class Oxford_Pets(Preprocess):
         # Display mask predicted by our model
         count = self.plot_multiple(y_pred, idx, rows, num_images, count)
         plt.subplots_adjust(hspace=0)
-    
-    
+
+
 ## ==================================================
 class Thebe(Preprocess):
     """ Handles loading of Thebe seismic data and labels into tf.datasets:
@@ -377,10 +385,14 @@ class Thebe(Preprocess):
         self.batch_size = batch_size
 
     def load_img_masks(self, imgs_paths, labels_paths):
-        imgs = np.stack([np.load(img).astype('float32') for img in imgs_paths])
-        labels = np.stack([np.load(label).astype('float32') for label in labels_paths])
-        
+        imgs = np.stack(
+            [np.load(img).astype('float32') for img in imgs_paths]
+        )
+        labels = np.stack(
+            [np.load(label).astype('float32') for label in labels_paths]
+        )
         return imgs, labels
+
     
     def data_generator(self, sub_group='train', as_numpy=False):
         """ 
@@ -390,15 +402,14 @@ class Thebe(Preprocess):
         """
         path_to_imgs = join(self.seismic_url, sub_group)
         path_to_labels = join(self.annotations_url, sub_group)
-        imgs_paths =  [(path_to_imgs + '/'+ s) for s in sorted(os.listdir(path_to_imgs))]
-        labels_paths = [(path_to_labels + '/'+ s) for s in sorted(os.listdir(path_to_labels))]
+        imgs_paths = sorted(glob(path_to_imgs+'/*'))
+        labels_paths = sorted(glob(path_to_labels+'/*'))
 
         random.Random(self.seed).shuffle(imgs_paths)
         random.Random(self.seed).shuffle(labels_paths)
-        
-        X, y = self.load_img_masks(imgs_paths, labels_paths)
+
         if as_numpy:
-            return X,y
-        dataset = tf_data.Dataset.from_tensor_slices((X, y))
-        #dataset = dataset.map(self.load_img_masks, num_parallel_calls=tf_data.AUTOTUNE)
+            return self.load_img_masks(imgs_paths, labels_paths)
+        dataset = tf_data.Dataset.from_tensor_slices(self.load_img_masks(imgs_paths, labels_paths))
+
         return dataset.batch(self.batch_size)

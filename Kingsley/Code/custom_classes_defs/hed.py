@@ -65,20 +65,25 @@ class HED2D(model_config):
             'block1_conv2','block2_conv2','block3_conv3','block4_conv3','block5_conv3'
             ]):
             x = vgg16.get_layer(name=name).output
-            x = layers.Conv2D(1, 1, padding="same", activation="relu")(x)
-            x = layers.Conv2DTranspose(1, 1, strides=2**i, padding="same", activation="relu")(x)
+            x = layers.Conv2D(1, 1, padding="same")(x)
+            if i>1:
+                x = layers.Conv2DTranspose(1, 1, strides=2**i, padding="same")(x)
+            x = self.landing(x, pad)
             conv_blocks.append(x)
 
         x = layers.concatenate(conv_blocks)
-
+        x = layers.Conv2D(1, 1, padding="same")(x)
         x = self.landing(x, pad)
+        conv_blocks.append(x)
+
         # Add a per-pixel classification layer
-        activation="softmax" if self.channels_dim[1]>1 else "sigmoid"
-        outputs = layers.Conv2D(
+        outputs = [
+            layers.Conv2D(
             self.channels_dim[1], 3, 
-            activation=activation, 
-            padding="same"
-        )(x)
+            activation="sigmoid", 
+            padding="same")(x) \
+            for x in conv_blocks
+        ]
 
         model =  keras.Model(inputs, outputs, name="HED")
 

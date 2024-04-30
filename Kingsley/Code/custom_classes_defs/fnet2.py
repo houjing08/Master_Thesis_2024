@@ -1,4 +1,5 @@
 from custom_classes_defs.setup import *
+import re
 
 ## ===================================================
 class FNET2D(model_config):
@@ -6,7 +7,7 @@ class FNET2D(model_config):
     Keras 2D image segmentation with a U-Net-like architecture;
     Taken from https://keras.io/examples/vision/oxford_pets_image_segmentation/
     """
-    def __init__(self, panel_sizes, model_arch=None, **kwargs):
+    def __init__(self, panel_sizes, vgg16_path=None, num_freeze=4, model_arch=None, **kwargs):
         """
         @params:
         img_shape : shape of image including panel dimension
@@ -19,17 +20,17 @@ class FNET2D(model_config):
 
         self.Name = 'fnet'
         self.panel_sizes = panel_sizes
+        self.vgg16_path = vgg16_path
+        self.num_freeze = num_freeze
 
     def encoder_block(self, x, previous_block_activation, panel_sizes,block):
 
         for i, filters in enumerate(panel_sizes):
             x = layers.Activation("relu")(x)
-            x = layers.Dropout(0.1)(x)
             x = layers.SeparableConv2D(filters, 3, padding="same")(x)
             x = layers.BatchNormalization()(x)
 
             x = layers.Activation("relu")(x)
-            x = layers.Dropout(0.1)(x)
             x = layers.SeparableConv2D(filters, 3, padding="same")(x)
             x = layers.BatchNormalization()(x)
 
@@ -88,11 +89,41 @@ class FNET2D(model_config):
                 zero_paddding = False
         return pad
     
+    def backbone(self, inter_inputs):
+
+        preprocessed = keras.applications.vgg16.preprocess_input(inter_inputs)
+
+        vgg16 = keras.applications.VGG16(
+            include_top=False,
+            weights="imagenet" if (self.vgg16_path is None) 
+                                else self.vgg16_path, 
+            input_tensor=preprocessed
+        )
+
+        conv_blocks = []
+        for i, name in enumerate([
+            'block1_conv2','block2_conv2','block3_conv3','block4_conv3','block5_conv3'
+            ]):
+            x = vgg16.get_layer(name=name).output
+            x = layers.Conv2D(1, 1, padding="same", activation="relu")(x)
+            x = layers.Conv2DTranspose(1, 1, strides=2**i, padding="same", activation="relu")(x)
+            conv_blocks.append(x)
+
+        x = layers.concatenate(conv_blocks)
+        outputs = layers.Conv2D(
+            self.channels_dim[0], 3, 
+            activation='relu', 
+            padding="same"
+        )(x)
+
+        return outputs
+    
     def build_model(self):
         inputs = keras.Input(shape=self.img_shape + (self.channels_dim[0],))
 
         pad = self.compute_zero_padding()
         inter_inputs = self.take_off(inputs, pad)
+        inter_inputs = self.backbone(inter_inputs)
 
         # Entry block
         x = layers.Conv2D(self.panel_sizes[0], 3, strides=2, padding="same")(inter_inputs)
@@ -125,6 +156,13 @@ class FNET2D(model_config):
             padding="same"
         )(x)
 
-        return keras.Model(inputs, outputs, name="F-NET")
+        model =  keras.Model(inputs, outputs, name="VGG-F-NET")
+
+        # Enforce transfer learning
+        for ly in model.layers:
+            if re.search(f'block[0-{self.num_freeze}]', ly.name):
+                ly.trainable = False
+
+        return model
     
     
