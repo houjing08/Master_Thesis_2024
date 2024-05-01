@@ -1,13 +1,17 @@
 import struct, os
 import random
+import re
 import time
 import cv2
 from array import array
-from os.path import join
+from os import walk
+from os.path import isfile,join
 from matplotlib import pyplot as plt
 import numpy as np
 from glob import glob
 import pandas as pd
+import segyio
+from skimage.util.shape import view_as_windows
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
 
@@ -401,11 +405,10 @@ class Thebe(Preprocess):
         return imgs, labels
 
     
-    def data_generator(self, sub_group='train', as_numpy=False):
+    def data_generator(self, sub_group='train', as_numpy=False, cache=False):
         """ 
-        Extracts and splits data into training and validation sets 
-        train_ratio = fraction of entire data
-        val_ratio = fraction of entire data
+        Extracts and splits data into training, validation and test sets 
+        Cache data to memory depending on available GPU memory.
         """
         path_to_imgs = join(self.seismic_url, sub_group)
         path_to_labels = join(self.annotations_url, sub_group)
@@ -418,8 +421,9 @@ class Thebe(Preprocess):
         if as_numpy:
             return self.load_img_masks(imgs_paths, labels_paths)
         dataset = tf_data.Dataset.from_tensor_slices(self.load_img_masks(imgs_paths, labels_paths))
-
-        return dataset.batch(self.batch_size)
+        dataset = dataset.batch(self.batch_size)
+        
+        return dataset.cache() if cache else dataset
     
     def plot_multiple(self, img_path, idx, rows, num_images, count):
         for col in range(num_images):
