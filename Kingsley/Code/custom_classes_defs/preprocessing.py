@@ -383,6 +383,13 @@ class Thebe(Preprocess):
         self.annotations_url = annotations_url
         self.seed = seed
         self.batch_size = batch_size
+        self.val_target_paths = glob(join(annotations_url,'val/*.npy'))
+        self.test_target_paths = glob(join(annotations_url,'test/*.npy'))
+        self.train_target_paths = glob(join(annotations_url,'train/*.npy'))
+        self.val_input_paths = glob(join(seismic_url,'val/*.npy'))
+        self.test_input_paths = glob(join(seismic_url,'test/*.npy')) 
+        self.train_input_paths = glob(join(seismic_url,'train/*.npy'))
+
 
     def load_img_masks(self, imgs_paths, labels_paths):
         imgs = np.stack(
@@ -413,3 +420,51 @@ class Thebe(Preprocess):
         dataset = tf_data.Dataset.from_tensor_slices(self.load_img_masks(imgs_paths, labels_paths))
 
         return dataset.batch(self.batch_size)
+    
+    def plot_multiple(self, img_path, idx, rows, num_images, count):
+        for col in range(num_images):
+            plt.subplot(rows, num_images, count)
+            plt.axis('off')
+            if isinstance(img_path, list):
+                img = np.load(img_path[idx[col]])
+                plt.imshow(img)
+                #img = tf_image.resize(img, self.img_size, method="nearest")
+                plt.imshow(img)
+                
+            else: # numpy array (img_path=y_pred)
+            
+                mask = img_path[idx[col]]
+                img = ImageOps.autocontrast(array_to_img(mask))
+                plt.imshow(img,cmap='gray')
+            count = count + 1 
+            
+        return count
+    
+    
+    def display_sample_image(self, y_pred, validation='val'):
+        """Quick utility to display a model's prediction."""
+        num_images = 8
+        idx = np.random.choice(np.arange(len(y_pred)), num_images)
+        if validation.lower()=='val':
+            img_path = self.val_input_paths
+            target_path = self.val_target_paths
+        elif validation.lower()=='test':
+            img_path = self.test_input_paths
+            target_path = self.test_target_paths
+        else:
+            img_path = self.train_input_paths
+            target_path = self.train_target_paths
+
+        plt.figure(figsize=(30,20)) 
+        rows = 3
+        count = 1
+        # Display input image
+        count = self.plot_multiple(img_path, idx, rows, num_images, count)
+        
+
+        # Display ground-truth target mask
+        count = self.plot_multiple(target_path, idx, rows, num_images, count)
+
+        # Display mask predicted by our model
+        count = self.plot_multiple(y_pred, idx, rows, num_images, count)
+        plt.subplots_adjust(hspace=0)
