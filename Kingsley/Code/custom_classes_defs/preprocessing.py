@@ -370,16 +370,82 @@ class Oxford_Pets(Preprocess):
 
 
 ## ==================================================
+## Seismic segy header and data loading
+
+# Reference segyio, https://github.com/equinor/segyio
+# Reference Segyio-notebook, https://github.com/equinor/segyio-notebooks
+# trace header and text header functions
+def parse_trace_headers(segyfile, n_traces):
+    """
+    Parse the segy file trace headers into a pandas dataframe.
+    Column names are defined from segyio internal tracefield
+    One row per trace
+    """
+    # Get all header keys
+    headers = segyio.tracefield.keys
+    # Initialize dataframe with trace id as index and headers as columns
+    df = pd.DataFrame(index=range(1, n_traces + 1),columns=headers.keys())
+    # Fill dataframe with all header values
+    for k, v in headers.items():
+        df[k] = segyfile.attributes(v)[:]
+    return df
+
+def parse_text_header(segyfile):
+    """
+    Format segy text header into a readable, clean dict
+    """
+    raw_header = segyio.tools.wrap(segyfile.text[0])
+    # Cut on C*int pattern
+    cut_header = re.split(r'C ', raw_header)[1::]
+    # Remove end of line return
+    text_header = [x.replace('\n', ' ') for x in cut_header]
+    text_header[-1] = text_header[-1][:-2]
+    # Format in dict
+    clean_header = {}
+    i = 1
+    for item in text_header:
+        key = "C" + str(i).rjust(2, '0')
+        i += 1
+        clean_header[key] = item
+    return clean_header
+
+def plot_segy(file):
+    """
+    Load data and get basic info of no.of samples,traces etc
+    possible to check text header and trace header if it is needed
+    """
+    with segyio.open(file, ignore_geometry=True) as f:
+        n_traces = f.tracecount
+        sample_rate = segyio.tools.dt(f) / 1000
+        n_samples = f.samples.size
+        twt = f.samples
+        data = f.trace.raw[:]
+        #Load headers - binary header, text header and trace header
+        bin_headers = f.bin
+        text_headers = parse_text_header(f)
+        trace_headers = parse_trace_headers(f, n_traces)
+        print(f'N Traces: {n_traces}, N Samples: {n_samples}, Sample rate: {sample_rate}ms, Trace length: {max(twt)}')
+        print(f'2D segy shape: {data.shape}')
+        #print(f'Binary header: {bin_headers}')
+        #print(f'Text header: {text_headers}')
+        #print(f'Trace header: {trace_headers}')
+        extent = [1, n_traces, twt[-1], twt[0]]
+    return data, extent
+
+## ==================================================
+
+
+## ==================================================
 class Thebe(Preprocess):
     """ Handles loading of Thebe seismic data and labels into tf.datasets:
         training, validation and test datasets.
         Data stored as numpy array in npy format in some url (path).
-      """
+    """
     def __init__(self, 
                 seismic_url, annotations_url, batch_size,
                 threshold=0.5, pos_label=1, seed=None
         ):
-                                 
+        
         super().__init__(threshold=threshold, pos_label=pos_label)
         self.threshold = threshold
         self.pos_label = pos_label
@@ -387,13 +453,12 @@ class Thebe(Preprocess):
         self.annotations_url = annotations_url
         self.seed = seed
         self.batch_size = batch_size
+        self.train_input_paths = glob(join(seismic_url,'train/*.npy'))
+        self.val_input_paths = glob(join(seismic_url,'val/*.npy'))
+        self.test_input_paths = glob(join(seismic_url,'test/*.npy'))
+        self.train_target_paths = glob(join(annotations_url,'train/*.npy')) 
         self.val_target_paths = glob(join(annotations_url,'val/*.npy'))
         self.test_target_paths = glob(join(annotations_url,'test/*.npy'))
-        self.train_target_paths = glob(join(annotations_url,'train/*.npy'))
-        self.val_input_paths = glob(join(seismic_url,'val/*.npy'))
-        self.test_input_paths = glob(join(seismic_url,'test/*.npy')) 
-        self.train_input_paths = glob(join(seismic_url,'train/*.npy'))
-
 
     def load_img_masks(self, imgs_paths, labels_paths):
         imgs = np.stack(
@@ -403,7 +468,6 @@ class Thebe(Preprocess):
             [np.load(label).astype('float32') for label in labels_paths]
         )
         return imgs, labels
-
     
     def data_generator(self, sub_group='train', as_numpy=False, cache=False):
         """ 
@@ -444,7 +508,6 @@ class Thebe(Preprocess):
             
         return count
     
-    
     def display_sample_image(self, y_pred, validation='val'):
         """Quick utility to display a model's prediction."""
         num_images = 8
@@ -465,7 +528,6 @@ class Thebe(Preprocess):
         # Display input image
         count = self.plot_multiple(img_path, idx, rows, num_images, count)
         
-
         # Display ground-truth target mask
         count = self.plot_multiple(target_path, idx, rows, num_images, count)
 
