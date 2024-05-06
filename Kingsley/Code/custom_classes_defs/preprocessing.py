@@ -476,8 +476,6 @@ class Thebe(Preprocess):
         if sub_group =='train':
             imgs_path = self.train_input_path
             labels_path = self.train_target_path
-            print(imgs_path)
-            print(labels_path)
         elif sub_group =='val':
             imgs_path = self.val_input_path
             labels_path = self.val_target_path
