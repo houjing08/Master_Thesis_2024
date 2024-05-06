@@ -436,55 +436,63 @@ def plot_segy(file):
 
 
 ## ==================================================
+
 class Thebe(Preprocess):
     """ Handles loading of Thebe seismic data and labels into tf.datasets:
         training, validation and test datasets.
         Data stored as numpy array in npy format in some url (path).
     """
-    def __init__(self, 
-                seismic_url, annotations_url, batch_size,
-                threshold=0.5, pos_label=1, seed=None
-        ):
+    def __init__(self, seismic_url, annotations_url, batch_size, threshold=0.5, pos_label=1, seed=None):
         
         super().__init__(threshold=threshold, pos_label=pos_label)
+        
         self.threshold = threshold
         self.pos_label = pos_label
         self.seismic_url = seismic_url
         self.annotations_url = annotations_url
         self.seed = seed
         self.batch_size = batch_size
-        self.train_input_paths = glob(join(seismic_url,'train/*.npy'))
-        self.val_input_paths = glob(join(seismic_url,'val/*.npy'))
-        self.test_input_paths = glob(join(seismic_url,'test/*.npy'))
-        self.train_target_paths = glob(join(annotations_url,'train/*.npy')) 
-        self.val_target_paths = glob(join(annotations_url,'val/*.npy'))
-        self.test_target_paths = glob(join(annotations_url,'test/*.npy'))
+        self.train_input_path = join(seismic_url,'train/seis_train.npy')
+        self.val_input_path = join(seismic_url,'val/seis_val.npy')
+        self.test_input_path = join(seismic_url,'test/seis_test.npy')
+        self.train_target_path = join(annotations_url,'train/fault_train.npy')
+        self.val_target_path = join(annotations_url,'val/fault_val.npy')
+        self.test_target_path = join(annotations_url,'test/fault_test.npy')
 
-    def load_img_masks(self, imgs_paths, labels_paths):
-        imgs = np.stack(
-            [np.load(img).astype('float32') for img in imgs_paths]
-        )
-        labels = np.stack(
-            [np.load(label).astype('float32') for label in labels_paths]
-        )
+    def load_img_masks(self, imgs_path, labels_path):
+        
+        imgs = np.load(imgs_path).astype('float32')
+        
+        labels = np.load(labels_path).astype('float32')
+        
         return imgs, labels
+
     
     def data_generator(self, sub_group='train', as_numpy=False, cache=False):
         """ 
         Extracts and splits data into training, validation and test sets 
         Cache data to memory depending on available GPU memory.
         """
-        path_to_imgs = join(self.seismic_url, sub_group)
-        path_to_labels = join(self.annotations_url, sub_group)
-        imgs_paths = sorted(glob(path_to_imgs+'/*'))
-        labels_paths = sorted(glob(path_to_labels+'/*'))
+        if sub_group =='train':
+            imgs_path = self.train_input_path
+            labels_path = self.train_target_path
+            print(imgs_path)
+            print(labels_path)
+        elif sub_group =='val':
+            imgs_path = self.val_input_path
+            labels_path = self.val_target_path
+        elif sub_group =='test':
+            imgs_path = self.test_input_path
+            labels_path = self.test_target_path
+        else: print('Non-valid subgroup')
 
-        random.Random(self.seed).shuffle(imgs_paths)
-        random.Random(self.seed).shuffle(labels_paths)
+        #random.Random(self.seed).shuffle(imgs_paths)
+        #random.Random(self.seed).shuffle(labels_paths)
 
         if as_numpy:
-            return self.load_img_masks(imgs_paths, labels_paths)
-        dataset = tf_data.Dataset.from_tensor_slices(self.load_img_masks(imgs_paths, labels_paths))
+            return self.load_img_masks(imgs_path, labels_path)
+
+        dataset = tf_data.Dataset.from_tensor_slices(self.load_img_masks(imgs_path, labels_path))
         dataset = dataset.batch(self.batch_size)
         
         return dataset.cache() if cache else dataset
@@ -513,14 +521,14 @@ class Thebe(Preprocess):
         num_images = 8
         idx = np.random.choice(np.arange(len(y_pred)), num_images)
         if validation.lower()=='val':
-            img_path = self.val_input_paths
-            target_path = self.val_target_paths
+            img_path = self.val_input_path
+            target_path = self.val_target_path
         elif validation.lower()=='test':
-            img_path = self.test_input_paths
-            target_path = self.test_target_paths
+            img_path = self.test_input_path
+            target_path = self.test_target_path
         else:
-            img_path = self.train_input_paths
-            target_path = self.train_target_paths
+            img_path = self.train_input_path
+            target_path = self.train_target_path
 
         plt.figure(figsize=(30,20)) 
         rows = 3
