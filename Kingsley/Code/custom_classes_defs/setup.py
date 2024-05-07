@@ -38,9 +38,13 @@ class model_config(keras.Model):
             mixed_precision=None,
             multiple_gpu_device=None,
             training_duration=None,
+            train_size=None,
+            test_size=None,
+            validation_size=None,
             **kwargs
         ):
         super().__init__(**kwargs)
+        self.sup_attr = list(super().__dict__)
 
         self.compile_args = dict(optimizer=optimizer, loss=loss)
         self.training_args = dict(epochs=epochs, batch_size=batch_size,
@@ -53,8 +57,12 @@ class model_config(keras.Model):
         self.mixed_precision = mixed_precision
         self.multiple_gpu_device = multiple_gpu_device
         self.training_duration = training_duration
+        self.NUM_GPU = len(tf.config.list_physical_devices('GPU'))
+        self.train_size = train_size
+        self.test_size = test_size
+        self.validation_size = validation_size
 
-        if mixed_precision:
+        if mixed_precision and self.NUM_GPU:
             # Necessary to speed up computations on GPU
             if isinstance(mixed_precision, str):
                 keras.mixed_precision.set_global_policy(mixed_precision)
@@ -93,20 +101,11 @@ class model_config(keras.Model):
 
     
     def info(self, prettyprint=True):
+        this_dict = np.setdiff1d(list(self.__dict__), self.sup_attr)
+        this_dict = np.setdiff1d(this_dict, ['sup_attr'])
         text = []
-        for param, value in [
-            ('compile_args', self.compile_args),
-            ('training_args', self.training_args),
-            ('model_arch', self.model_arch),
-            ('new_training_session', self.new_training_session),
-            ('save_path', self.save_path),
-            ('threshold', self.threshold),
-            ('pos_label', self.pos_label),
-            ('labels', self.labels),
-            ('mixed_precision', self.mixed_precision),
-            ('multiple_gpu_device', self.multiple_gpu_device),
-            ('training_duration (mins)', self.training_duration)
-        ]:
+        for param in this_dict:
+            value = self.__dict__[param]
             if isinstance(value, dict):
                 text.append("{:>20}:".format(param))
                 for k, v in value.items():
@@ -121,6 +120,7 @@ class model_config(keras.Model):
                         text.append("{:>30}: {}".format(k, type(v)))
             else:
                 text.append("{:>20}: {}".format(param, value))
+                
         text = '\n'.join(text)
         if prettyprint:
             print(text)
@@ -144,10 +144,18 @@ class model_config(keras.Model):
                 os.remove(chkpt)
             print('Model training...')
             start = time.time()
-            history = model.fit(data, **self.training_args)
+            
+            if isinstance(data, tuple):
+                history = model.fit(x=data[0], y=data[1], **self.training_args)
+            else:
+                history = model.fit(data, **self.training_args)
+
             self.training_duration = f'{(time.time()-start) / 60:.2f}'
             print('training elapsed time: ___{:5}___ minutes'.format(self.training_duration))
             print('...training completed!')
+
+            for chkpt in sorted(glob(self.save_path+'/*.h5'))[:-1]: # keep one only
+                os.remove(chkpt)
 
             if plot_history:
                 show_convergence(history.history, metrics=metrics)
@@ -174,8 +182,9 @@ class model_config(keras.Model):
 
         best_model_track = sorted(glob(self.save_path+'/*.h5'))
         if len(best_model_track):
-            mode = best_model_track[0].__contains__('loss')-1
-            model.load_weights(best_model_track[mode])
+            model.load_weights(best_model_track[-1])
+            # mode = best_model_track[0].__contains__('loss')-1
+            # model.load_weights(best_model_track[mode])
 
         return model, history
 
@@ -184,7 +193,9 @@ class model_config(keras.Model):
         lr_monitor='val_accuracy', 
         chkpt_monitor='val_loss',
         es_patience=10,
-        lr_patience=10
+        lr_patience=10,
+        lr_factor=0.5,
+        lr_min=1e-6
     ):
         """ Define of callback methods to use for training (some params hard-coded!)"""
         earlystopping = keras.callbacks.EarlyStopping(
@@ -195,20 +206,21 @@ class model_config(keras.Model):
 
         reduce_lr_on_plateau = keras.callbacks.ReduceLROnPlateau(
             monitor=lr_monitor, 
-            factor=0.5, 
+            factor=lr_factor, 
             patience=lr_patience, 
-            min_lr=1e-6,
+            min_lr=lr_min,
             verbose=1
         )
-        filename =  "chkpt-"+chkpt_monitor+"-{val_loss:.4f}-{epoch:02d}.weights.h5"\
-                    if chkpt_monitor.__contains__('loss') else \
-                     "chkpt-"+chkpt_monitor+"-{val_accuracy:.4f}-{epoch:02d}.weights.h5"
 
+        filename =  "{{{}:.4f}}".format(chkpt_monitor)
+        filename = "chkpt-{}-{}-{}.weights.h5" \
+                    .format('{epoch:02d}',chkpt_monitor,filename)
         checkpoint = keras.callbacks.ModelCheckpoint(
             os.path.join(self.save_path, filename), 
             monitor=chkpt_monitor,
             save_weights_only=True,
-            save_best_only=True
+            save_best_only=True,
+            mode = 'min' if chkpt_monitor.__contains__('loss') else 'max'
         )
 
         schedule_lr = keras.callbacks.LearningRateScheduler(
@@ -217,10 +229,10 @@ class model_config(keras.Model):
         )
 
         callback_list = [
-            reduce_lr_on_plateau,
             checkpoint,
-            # schedule_lr,
+            reduce_lr_on_plateau,
             earlystopping
+            # schedule_lr,
         ]
         return callback_list
 
@@ -364,52 +376,50 @@ def show_convergence(history, metrics='loss'):
 #         # from keras.io
 # #################################################################
        
-# class MyTrainer(keras.Model):
-#     def __init__(self, model):
-#         super().__init__()
-#         self.model = model
-#         # Create loss and metrics here.
-#         self.loss_fn = keras.losses.SparseCategoricalCrossentropy()
-#         self.accuracy_metric = keras.metrics.SparseCategoricalAccuracy()
+class f1_score(keras.metrics.Metric):
 
-#     @property
-#     def metrics(self):
-#         # List metrics here.
-#         return [self.accuracy_metric]
+  def __init__(self, threshold=0.5, positive_label=1, name='f1_score', **kwargs):
+    super().__init__(name=name, **kwargs)
+    self.threshold = threshold
+    self.positive_label = positive_label
+    self.true_positives = self.add_weight(name='tp', initializer='zeros')
+    self.false_positives = self.add_weight(name='fp', initializer='zeros')
+    self.false_negatives = self.add_weight(name='fn', initializer='zeros')
 
-#     def train_step(self, data):
-#         x, y = data
-#         with tf.GradientTape() as tape:
-#             y_pred = self.model(x, training=True)  # Forward pass
-#             # Compute loss value
-#             loss = self.loss_fn(y, y_pred)
+  def update_state(self, y_true, y_pred, sample_weight=None):
+    y_true = tf.cast(y_true, "bool")
+    y_pred = tf.cast(y_pred, "float32")
 
-#         # Compute gradients
-#         trainable_vars = self.trainable_variables
-#         gradients = tape.gradient(loss, trainable_vars)
+    # if len(y_true.shape) < len(y_pred.shape):
+    #     y_true = tf.expand_dims(y_true,-1)
 
-#         # Update weights
-#         self.optimizer.apply_gradients(zip(gradients, trainable_vars))
+    if self.positive_label:
+      y_pred = y_pred > self.threshold
+    else:
+      y_pred = tf.subtract(1,y_pred) > self.threshold
 
-#         # Update metrics
-#         for metric in self.metrics:
-#             metric.update_state(y, y_pred)
+    TP = tf.logical_and(tf.equal(y_true, True), tf.equal(y_pred, True))
+    FP = tf.logical_and(tf.equal(y_true, False), tf.equal(y_pred, True))
+    FN = tf.logical_and(tf.equal(y_true, True), tf.equal(y_pred, False))
+    TP = tf.cast(TP, self.dtype)
+    FP = tf.cast(FP, self.dtype)
+    FN = tf.cast(FN, self.dtype)
+    # if sample_weight is not None:
+    #   sample_weight = tf.cast(sample_weight, self.dtype)
+    #   TP = TP * sample_weight
+    self.true_positives.assign_add(tf.reduce_sum(TP))
+    self.false_positives.assign_add(tf.reduce_sum(FP))
+    self.false_negatives.assign_add(tf.reduce_sum(FN))
 
-#         # Return a dict mapping metric names to current value.
-#         return {m.name: m.result() for m in self.metrics}
+  def result(self):
+    recall = tf.realdiv(self.true_positives, 
+                        tf.add(self.true_positives,self.false_negatives))
+    precision = tf.realdiv(self.true_positives, 
+                           tf.add(self.true_positives,self.false_positives))
+    return tf.realdiv( 2 * recall * precision, tf.add(recall, precision))
 
-#     def test_step(self, data):
-#         x, y = data
+  def reset_state(self):
+    self.true_positives.assign(0)
+    self.false_positives.assign(0)
+    self.false_negatives.assign(0)
 
-#         # Inference step
-#         y_pred = self.model(x, training=False)
-
-#         # Update metrics
-#         for metric in self.metrics:
-#             metric.update_state(y, y_pred)
-#         return {m.name: m.result() for m in self.metrics}
-
-#     def call(self, x):
-#         # Equivalent to `call()` of the wrapped keras.Model
-#         x = self.model(x)
-#         return x
