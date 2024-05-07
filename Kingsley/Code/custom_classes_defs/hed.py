@@ -48,22 +48,25 @@ class HED2D(model_config):
     def build_model(self):
         inputs = keras.Input(shape=self.img_shape + (self.channels_dim[0],))
 
-        pad = self.compute_zero_padding()
-        inter_inputs = self.take_off(inputs, pad)
+        intermediate = False
+        if self.channels_dim[0] == 1:
+            inter_inputs = layers.Concatenate(axis=-1)([inputs]*3)
+            intermediate = True
 
+        pad = self.compute_zero_padding()
+        inter_inputs = self.take_off(inter_inputs if intermediate else inputs, pad)
         preprocessed = keras.applications.vgg16.preprocess_input(inter_inputs)
 
         vgg16 = keras.applications.VGG16(
             include_top=False,
             weights="imagenet" if (self.vgg16_path is None) 
                                 else self.vgg16_path, 
-            input_tensor=preprocessed
+            input_tensor=preprocessed,
         )
 
         conv_blocks = []
-        for i, name in enumerate([
-            'block1_conv2','block2_conv2','block3_conv3','block4_conv3','block5_conv3'
-            ]):
+        conv_names = ['block1_conv2','block2_conv2','block3_conv3','block4_conv3','block5_conv3']
+        for i, name in enumerate(conv_names):
             x = vgg16.get_layer(name=name).output
             x = layers.Conv2D(1, 1, padding="same")(x)
             if i>1:
@@ -81,8 +84,9 @@ class HED2D(model_config):
             layers.Conv2D(
             self.channels_dim[1], 3, 
             activation="sigmoid", 
-            padding="same")(x) \
-            for x in conv_blocks
+            padding="same", 
+            name=f'output{i}')(x) \
+            for i, x in enumerate(conv_blocks)
         ]
 
         model =  keras.Model(inputs, outputs, name="HED")

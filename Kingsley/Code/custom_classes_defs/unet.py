@@ -6,11 +6,12 @@ class UNET2D(model_config):
     Keras 2D image segmentation with a U-Net-like architecture;
     Taken from https://keras.io/examples/vision/oxford_pets_image_segmentation/
     """
-    def __init__(self, panel_sizes, model_arch=None, **kwargs):
+    def __init__(self, panel_sizes, model_arch=None, drop_rate=0.25, **kwargs):
         """
         @params:
-        img_shape : shape of image including panel dimension
-        resnet50_path : path to pretrained model (resnet50)
+        panel_sizes : list of filter sizes at each encoder layer
+        model_arch : model architecture
+        drop_rate : dropout rate (probability)
         """
         if model_arch is None:
             super().__init__(**kwargs)
@@ -19,6 +20,7 @@ class UNET2D(model_config):
 
         self.Name = 'unet'
         self.panel_sizes = panel_sizes
+        self.drop_rate = drop_rate
 
 
     def compute_zero_padding(self):
@@ -59,12 +61,12 @@ class UNET2D(model_config):
         for filters in self.panel_sizes[1:]:
             # if filters < self.panel_sizes[0]:
             x = layers.Activation("relu")(x)
-            x = layers.Dropout(0.25)(x)
+            x = layers.Dropout(self.drop_rate)(x)
             x = layers.Conv2D(filters, 3, padding="same")(x)
             x = layers.BatchNormalization()(x)
 
             x = layers.Activation("relu")(x)
-            x = layers.Dropout(0.25)(x)
+            x = layers.Dropout(self.drop_rate)(x)
             x = layers.Conv2D(filters, 3, padding="same")(x)
             x = layers.BatchNormalization()(x)
 
