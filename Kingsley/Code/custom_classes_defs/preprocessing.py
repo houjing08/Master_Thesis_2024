@@ -10,8 +10,8 @@ from matplotlib import pyplot as plt
 import numpy as np
 from glob import glob
 import pandas as pd
-import segyio
-from skimage.util.shape import view_as_windows
+# import segyio
+# from skimage.util.shape import view_as_windows
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
 
@@ -26,6 +26,7 @@ from tensorflow import io as tf_io
 from keras.utils import load_img, array_to_img , img_to_array
 from PIL import ImageOps
 
+
 ## ==================================================
 class Preprocess():
     """ Common preprocessing tools """
@@ -33,6 +34,9 @@ class Preprocess():
         self.scaler = MinMaxScaler()   
         self.threshold = threshold
         self.pos_label = pos_label
+        self.train_size = None
+        self.test_size = None
+        self.validation_size = None
 
     def transform(self, X):
         return self.scaler.transform(X.reshape(-1,1)).reshape(X.shape)
@@ -44,61 +48,25 @@ class Preprocess():
         if add_panel:
             data = np.expand_dims(data, -1)
         return self.transform(data.astype("float32"))   
-
-    # def get_labels(self, X, normalize=False):
-    #     """ Determine labels on a matrix of probabilities p \in [0,1]:
-    #         label = 1 if p > threshold else 0. """
-    #     if normalize:
-    #         X = self.normalize(X)
-    #     if self.pos_label:
-    #         # cut = np.quantile(X, q=self.threshold)
-    #         cuts = np.quantile(X, q=self.threshold, axis=(1,2))
-    #         cuts = np.expand_dims(np.expand_dims(cuts,-1),-1)
-    #         return (X > cuts).astype('int')
-    #     else:
-    #         # cut = np.quantile(X, q=1-self.threshold)
-    #         cuts = np.quantile(X, q=1-self.threshold, axis=(1,2))
-    #         cuts = np.expand_dims(np.expand_dims(cuts,-1),-1)
-    #         return (X < cuts).astype('int')
         
-    def get_labels(self, X, normalize=False):
-        """ Determine labels on an image with intensities p \in [0,255]:
-            using OTSU's thresholding """
-        labels = self.Otsu_thresholding(X)
+    def get_labels(self, X):
+        """ Determine labels on an image with intensities p \in [0,1] """
 
         if self.pos_label:
-            return (labels > 0).astype('int')
+            return (X > self.threshold).astype('uint8')
         else:
-            return (labels <= 0).astype('int')
-        
-    # def get_labels(self, X, normalize=False):
-    #     """ Determine labels on an image with intensities p \in [0,255]:
-    #         using OTSU's thresholding """
-
-    #     if self.pos_label:
-    #         return (X > self.threshold).astype('int')
-    #     else:
-    #         return (X < self.threshold).astype('int')
+            return (X < self.threshold).astype('uint8')
 
 
-    def data_generator(self, data, batch_size=1, normalize=True, as_numpy=False):
-        X, y =  self.normalize(data) if normalize else data, \
-                self.get_labels(data,normalize)
-        if not(as_numpy):
+    def data_generator(self, data, batch_size=1, normalize=True, as_numpy=False, cache=False):
+        X = self.normalize(data) if normalize else data
+        y = self.get_labels(X)
+
+        if as_numpy:
             return X, y
+        
         dataset = tf_data.Dataset.from_tensor_slices((X,y)).batch(batch_size)
-        return dataset
-    
-    def Otsu_thresholding(self, X):
-        img = X.astype('uint8')
-        labels = []
-        for i in range(len(X)):
-            _, label = cv2.threshold(img[i], 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
-            labels.append(label)
-        # blur = cv2.GaussianBlur(img[i],(5,5),0)
-        # _, label = cv2.threshold(blur,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
-
-        return np.array(labels)
+        return dataset.cache() if cache else dataset
 
 
 ## ==================================================
@@ -189,7 +157,7 @@ def show_images(images, title_texts):
 ## ==================================================
 class MNIST_letters(Preprocess):
     """ Handles loading, scaling and preprocessing of MNIST handwritten letters """
-    def __init__(self, url,threshold=0.5, pos_label=1,edge_letters=True):
+    def __init__(self, url, threshold=0.5, pos_label=1, edge_letters=True):
                                  
         super().__init__(threshold=threshold, pos_label=pos_label)
         self.threshold = threshold
@@ -213,10 +181,11 @@ class MNIST_letters(Preprocess):
         # # blur = cv2.GaussianBlur(img,(5,5),0)
         # threshold, _ = cv2.threshold(img,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
 
-    def split_data(self, train_ratio = 0.1, img_dim=28, val_ratio = 0.0):
+    def split_data(self, train_ratio = 0.1, img_dim=28, val_ratio = 0.0, random_state=None):
         """ Split data into train-test proportions, given train-ratio, and re-arrange"""
         x_train, x_test, y_train, y_test = \
-        train_test_split(self.df.values, self.df.index.values, train_size=train_ratio)
+        train_test_split(self.df.values, self.df.index.values, 
+                         train_size=train_ratio, random_state=random_state)
         x_train = np.array([x.reshape(img_dim,img_dim) for x in x_train])
         x_test = np.array([x.reshape(img_dim,img_dim) for x in x_test])
 
@@ -224,8 +193,14 @@ class MNIST_letters(Preprocess):
             # take fraction of remaining data for validation
             test_ratio = val_ratio / (1-train_ratio)
             x_test, x_val, y_test, y_val = \
-            train_test_split(x_test, y_test, test_size=test_ratio)
+            train_test_split(x_test, y_test, test_size=test_ratio, random_state=random_state)
+            self.validation_size = len(x_val)
+            self.train_size = len(x_train)
+            self.test_size = len(x_test)
             return (x_train, y_train), (x_test, y_test), (x_val, y_val)
+        
+        self.train_size = len(x_train)
+        self.test_size = len(x_test)
 
         return (x_train, y_train), (x_test, y_test)
 
@@ -313,6 +288,10 @@ class Oxford_Pets(Preprocess):
         self.test_input_paths = self.input_img_paths[train_samples:][val_samples:]
         self.test_target_paths = self.target_img_paths[train_samples:][val_samples:]
 
+        self.train_size = len(self.train_input_paths)
+        self.test_size = len(self.test_input_paths)
+        self.validation_size = len(self.val_input_paths)
+
         # Instantiate dataset for each split
         train_dataset = self.data_generator(self.train_input_paths, self.train_target_paths, cache)
         valid_dataset = self.data_generator(self.val_input_paths, self.val_target_paths, cache)
@@ -370,69 +349,118 @@ class Oxford_Pets(Preprocess):
 
 
 ## ==================================================
-## Seismic segy header and data loading
+class Thebe(Preprocess):
+    """ Handles loading of Thebe seismic data and labels into tf.datasets:
+        training, validation and test datasets.
+        Data stored as numpy array in npy format in some url (path).
+      """
+    def __init__(self, 
+                seismic_url, annotations_url, batch_size,
+                threshold=0.5, pos_label=1, seed=None
+        ):
+                                 
+        super().__init__(threshold=threshold, pos_label=pos_label)
+        self.threshold = threshold
+        self.pos_label = pos_label
+        self.seismic_url = seismic_url
+        self.annotations_url = annotations_url
+        self.seed = seed
+        self.batch_size = batch_size
 
-# Reference segyio, https://github.com/equinor/segyio
-# Reference Segyio-notebook, https://github.com/equinor/segyio-notebooks
-# trace header and text header functions
-def parse_trace_headers(segyfile, n_traces):
-    """
-    Parse the segy file trace headers into a pandas dataframe.
-    Column names are defined from segyio internal tracefield
-    One row per trace
-    """
-    # Get all header keys
-    headers = segyio.tracefield.keys
-    # Initialize dataframe with trace id as index and headers as columns
-    df = pd.DataFrame(index=range(1, n_traces + 1),columns=headers.keys())
-    # Fill dataframe with all header values
-    for k, v in headers.items():
-        df[k] = segyfile.attributes(v)[:]
-    return df
+    def load_img_masks(self, imgs_paths, labels_paths):
+        imgs = np.stack(
+            [np.load(img).astype('float32') for img in imgs_paths]
+        )
+        labels = np.stack(
+            [np.load(label).astype('float32') for label in labels_paths]
+        )
+        return imgs, labels
 
-def parse_text_header(segyfile):
-    """
-    Format segy text header into a readable, clean dict
-    """
-    raw_header = segyio.tools.wrap(segyfile.text[0])
-    # Cut on C*int pattern
-    cut_header = re.split(r'C ', raw_header)[1::]
-    # Remove end of line return
-    text_header = [x.replace('\n', ' ') for x in cut_header]
-    text_header[-1] = text_header[-1][:-2]
-    # Format in dict
-    clean_header = {}
-    i = 1
-    for item in text_header:
-        key = "C" + str(i).rjust(2, '0')
-        i += 1
-        clean_header[key] = item
-    return clean_header
+    
+    def data_generator(self, sub_group='train', as_numpy=False):
+        """ 
+        Extracts and splits data into training and validation sets 
+        train_ratio = fraction of entire data
+        val_ratio = fraction of entire data
+        """
+        path_to_imgs = join(self.seismic_url, sub_group)
+        path_to_labels = join(self.annotations_url, sub_group)
+        imgs_paths = sorted(glob(path_to_imgs+'/*'))
+        labels_paths = sorted(glob(path_to_labels+'/*'))
 
-def plot_segy(file):
-    """
-    Load data and get basic info of no.of samples,traces etc
-    possible to check text header and trace header if it is needed
-    """
-    with segyio.open(file, ignore_geometry=True) as f:
-        n_traces = f.tracecount
-        sample_rate = segyio.tools.dt(f) / 1000
-        n_samples = f.samples.size
-        twt = f.samples
-        data = f.trace.raw[:]
-        #Load headers - binary header, text header and trace header
-        bin_headers = f.bin
-        text_headers = parse_text_header(f)
-        trace_headers = parse_trace_headers(f, n_traces)
-        print(f'N Traces: {n_traces}, N Samples: {n_samples}, Sample rate: {sample_rate}ms, Trace length: {max(twt)}')
-        print(f'2D segy shape: {data.shape}')
-        #print(f'Binary header: {bin_headers}')
-        #print(f'Text header: {text_headers}')
-        #print(f'Trace header: {trace_headers}')
-        extent = [1, n_traces, twt[-1], twt[0]]
-    return data, extent
+        random.Random(self.seed).shuffle(imgs_paths)
+        random.Random(self.seed).shuffle(labels_paths)
 
-## ==================================================
+        if as_numpy:
+            return self.load_img_masks(imgs_paths, labels_paths)
+        dataset = tf_data.Dataset.from_tensor_slices(self.load_img_masks(imgs_paths, labels_paths))
+
+        return dataset.batch(self.batch_size)
+    
+
+
+# ## ==================================================
+# ## Seismic segy header and data loading
+
+# # Reference segyio, https://github.com/equinor/segyio
+# # Reference Segyio-notebook, https://github.com/equinor/segyio-notebooks
+# # trace header and text header functions
+# def parse_trace_headers(segyfile, n_traces):
+#     """
+#     Parse the segy file trace headers into a pandas dataframe.
+#     Column names are defined from segyio internal tracefield
+#     One row per trace
+#     """
+#     # Get all header keys
+#     headers = segyio.tracefield.keys
+#     # Initialize dataframe with trace id as index and headers as columns
+#     df = pd.DataFrame(index=range(1, n_traces + 1),columns=headers.keys())
+#     # Fill dataframe with all header values
+#     for k, v in headers.items():
+#         df[k] = segyfile.attributes(v)[:]
+#     return df
+
+# def parse_text_header(segyfile):
+#     """
+#     Format segy text header into a readable, clean dict
+#     """
+#     raw_header = segyio.tools.wrap(segyfile.text[0])
+#     # Cut on C*int pattern
+#     cut_header = re.split(r'C ', raw_header)[1::]
+#     # Remove end of line return
+#     text_header = [x.replace('\n', ' ') for x in cut_header]
+#     text_header[-1] = text_header[-1][:-2]
+#     # Format in dict
+#     clean_header = {}
+#     i = 1
+#     for item in text_header:
+#         key = "C" + str(i).rjust(2, '0')
+#         i += 1
+#         clean_header[key] = item
+#     return clean_header
+
+# def plot_segy(file):
+#     """
+#     Load data and get basic info of no.of samples,traces etc
+#     possible to check text header and trace header if it is needed
+#     """
+#     with segyio.open(file, ignore_geometry=True) as f:
+#         n_traces = f.tracecount
+#         sample_rate = segyio.tools.dt(f) / 1000
+#         n_samples = f.samples.size
+#         twt = f.samples
+#         data = f.trace.raw[:]
+#         #Load headers - binary header, text header and trace header
+#         bin_headers = f.bin
+#         text_headers = parse_text_header(f)
+#         trace_headers = parse_trace_headers(f, n_traces)
+#         print(f'N Traces: {n_traces}, N Samples: {n_samples}, Sample rate: {sample_rate}ms, Trace length: {max(twt)}')
+#         print(f'2D segy shape: {data.shape}')
+#         #print(f'Binary header: {bin_headers}')
+#         #print(f'Text header: {text_headers}')
+#         #print(f'Trace header: {trace_headers}')
+#         extent = [1, n_traces, twt[-1], twt[0]]
+#     return data, extent
 
 
 ## ==================================================
@@ -442,101 +470,105 @@ class Thebe(Preprocess):
         training, validation and test datasets.
         Data stored as numpy array in npy format in some url (path).
     """
-    def __init__(self, seismic_url, annotations_url, batch_size, threshold=0.5, pos_label=1, seed=None):
+    def __init__(self, 
+        seismic_url, 
+        annotations_url, 
+        threshold=0.5, 
+        pos_label=1, 
+        img_size=(96,96),
+        ratio = None
+    ):
         
         super().__init__(threshold=threshold, pos_label=pos_label)
         
-        self.threshold = threshold
-        self.pos_label = pos_label
         self.seismic_url = seismic_url
         self.annotations_url = annotations_url
-        self.seed = seed
-        self.batch_size = batch_size
-        self.train_input_path = join(seismic_url,'train/seis_train.npy')
-        self.val_input_path = join(seismic_url,'val/seis_val.npy')
-        self.test_input_path = join(seismic_url,'test/seis_test.npy')
-        self.train_target_path = join(annotations_url,'train/fault_train.npy')
-        self.val_target_path = join(annotations_url,'val/fault_val.npy')
-        self.test_target_path = join(annotations_url,'test/fault_test.npy')
+        self.img_size = img_size
+        self.ratio = ratio
+
+    def select_path(self, sub_group='train'):
+        """ Picks paths containing image patches and 
+        annotations for given data subgroup (train, val, test) """
+
+        if sub_group.lower() in ['train','val','test']:
+            sub_group = sub_group.lower()
+            imgs_path = join(self.seismic_url, f'seis_{sub_group}.npy')
+            labels_path = join(self.annotations_url, f'fault_{sub_group}.npy')
+        else: 
+            raise Exception(f'Non-valid subgroup: {sub_group}!')
+
+        return imgs_path, labels_path
 
     def load_img_masks(self, imgs_path, labels_path):
         
         imgs = np.load(imgs_path).astype('float32')
         
-        labels = np.load(labels_path).astype('float32')
+        labels = np.load(labels_path).astype('uint8')
         
         return imgs, labels
 
     
-    def data_generator(self, sub_group='train', as_numpy=False, cache=False):
+    def data_generator(self, sub_group='train', batch_size=1, as_numpy=False, cache=False):
         """ 
         Extracts and splits data into training, validation and test sets 
         Cache data to memory depending on available GPU memory.
         """
-        if sub_group =='train':
-            imgs_path = self.train_input_path
-            labels_path = self.train_target_path
-        elif sub_group =='val':
-            imgs_path = self.val_input_path
-            labels_path = self.val_target_path
-        elif sub_group =='test':
-            imgs_path = self.test_input_path
-            labels_path = self.test_target_path
-        else: print('Non-valid subgroup')
+        imgs_path, labels_path = self.select_path(sub_group)
 
-        #random.Random(self.seed).shuffle(imgs_paths)
-        #random.Random(self.seed).shuffle(labels_paths)
+        X, y = self.load_img_masks(imgs_path, labels_path)
+
+        if isinstance(self.ratio, type(0.0)):
+            assert (self.ratio > 0 and self.ratio < 1)
+            L = int(len(y) * self.ratio)
+            X, y  = X[:L], y[:L]
+
+        if sub_group=='train':
+            self.train_size = len(y)
+        elif sub_group=='val':
+            self.validation_size = len(y)
+        elif sub_group=='test':
+            self.test_size = len(y)
 
         if as_numpy:
-            return self.load_img_masks(imgs_path, labels_path)
+            return X, y
 
-        dataset = tf_data.Dataset.from_tensor_slices(self.load_img_masks(imgs_path, labels_path))
-        dataset = dataset.batch(self.batch_size)
+        dataset = tf_data.Dataset.from_tensor_slices((X,y))
+        dataset = dataset.batch(batch_size)
         
         return dataset.cache() if cache else dataset
     
-    def plot_multiple(self, img_path, idx, rows, num_images, count):
+    def plot_multiple(self, data, idx, label=True):
+        num_images = len(idx)
         for col in range(num_images):
-            plt.subplot(rows, num_images, count)
+            plt.subplot(self.figrows, num_images, self.figcount)
             plt.axis('off')
-            if isinstance(img_path, list):
-                img = np.load(img_path[idx[col]])
-                plt.imshow(img)
-                #img = tf_image.resize(img, self.img_size, method="nearest")
-                plt.imshow(img)
+            if label:
+                img = data[col]
+                plt.imshow(img, cmap='gray')
+                plt.title(f'label {idx[col]}')
+            else:
+                img = data[col]
+                plt.imshow(img, cmap='seismic')
+                plt.title(f'image {idx[col]}')
+            self.figcount = self.figcount + 1 
                 
-            else: # numpy array (img_path=y_pred)
-            
-                mask = img_path[idx[col]]
-                img = ImageOps.autocontrast(array_to_img(mask))
-                plt.imshow(img,cmap='gray')
-            count = count + 1 
-            
-        return count
-    
-    def display_sample_image(self, y_pred, validation='val'):
-        """Quick utility to display a model's prediction."""
-        num_images = 8
-        idx = np.random.choice(np.arange(len(y_pred)), num_images)
-        if validation.lower()=='val':
-            img_path = self.val_input_path
-            target_path = self.val_target_path
-        elif validation.lower()=='test':
-            img_path = self.test_input_path
-            target_path = self.test_target_path
-        else:
-            img_path = self.train_input_path
-            target_path = self.train_target_path
-
-        plt.figure(figsize=(30,20)) 
-        rows = 3
-        count = 1
+    def display_sample_images(self, imgs, labels, y_pred=None, num_images=8):
+        """Display images, labels and predictions for a selected number of images."""
+        idx = sorted(
+            np.random.choice(np.arange(len(labels)), num_images, replace=False)
+        )
+        self.figrows = 2 if (y_pred is None) else 3
+        plt.figure(figsize=(5*self.rows,5*num_images)) 
+        self.figcount = 1
+        
         # Display input image
-        count = self.plot_multiple(img_path, idx, rows, num_images, count)
+        self.plot_multiple(imgs[idx], idx, label=False)
         
         # Display ground-truth target mask
-        count = self.plot_multiple(target_path, idx, rows, num_images, count)
+        self.plot_multiple(labels[idx], idx)
 
         # Display mask predicted by our model
-        count = self.plot_multiple(y_pred, idx, rows, num_images, count)
+        if (y_pred is not None):
+            self.plot_multiple(y_pred[idx], idx)
+
         plt.subplots_adjust(hspace=0)

@@ -103,8 +103,9 @@ class model_config(keras.Model):
     def info(self, prettyprint=True):
         this_dict = np.setdiff1d(list(self.__dict__), self.sup_attr)
         this_dict = np.setdiff1d(this_dict, ['sup_attr'])
+        this_dict = np.setdiff1d(this_dict, list(self.model_arch.keys()))
         text = []
-        for param in this_dict:
+        for param in sorted(this_dict):
             value = self.__dict__[param]
             if isinstance(value, dict):
                 text.append("{:>20}:".format(param))
