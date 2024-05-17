@@ -29,7 +29,7 @@ class FNET2D(model_config):
         self.drop_rate = drop_rate
         self.add_residual = add_residual
 
-    def conv_block(self, num_filters):
+    def conv_block(self, num_filters, name):
         """ Double convolutions with batch-norms, activations and dropouts"""
         cblock = keras.Sequential(
             [
@@ -37,7 +37,7 @@ class FNET2D(model_config):
                 layers.BatchNormalization(),
                 layers.Activation("relu"),
                 layers.Dropout(self.drop_rate),
-                layers.Conv2D(num_filters, 3, padding="same"),
+                layers.Conv2D(num_filters, 3, padding="same", name=name),
                 layers.BatchNormalization(),
                 layers.Activation("relu"),
                 layers.Dropout(self.drop_rate)
@@ -45,29 +45,37 @@ class FNET2D(model_config):
         )
         return cblock
     
-    def deconv_block(self, num_filters):
-        """ Double deconvolutions with activations and batch-norms"""
-        dblock = keras.Sequential(
-            [
-                layers.Activation("relu"),
-                layers.Conv2DTranspose(num_filters, 3, padding="same"),
-                layers.BatchNormalization(),
-                layers.Activation("relu"),
-                layers.Conv2DTranspose(num_filters, 3, padding="same"),
-                layers.BatchNormalization()
-            ]
-        )
-        return dblock
+    # def deconv_block(self, num_filters):
+    #     """ Double deconvolutions with activations and batch-norms"""
+    #     dblock = keras.Sequential(
+    #         [
+    #             layers.Activation("relu"),
+    #             layers.Conv2DTranspose(num_filters, 3, padding="same"),
+    #             layers.BatchNormalization(),
+    #             layers.Activation("relu"),
+    #             layers.Conv2DTranspose(num_filters, 3, padding="same"),
+    #             layers.BatchNormalization()
+    #         ]
+    #     )
+    #     return dblock
 
-    def encoder_blocks(self, x, previous_block_activation, panel_sizes,block):
+    def encoder_blocks(self, x, encoder_blocks_outputs, panel_sizes,block):
 
-        encoder_blocks_outputs = [previous_block_activation]
+        # encoder_blocks_outputs = [previous_block_activation]
+        if not len(encoder_blocks_outputs):
+            encoder_blocks_outputs = []
+
         depth = len(panel_sizes)
         for i, filters in enumerate(panel_sizes):
-            x = self.conv_block(filters)(x)
+            name = f'encoder_block_{chr(block+65)}{i+1}'
+            x = self.conv_block(filters, name=name)(x)
 
-            if i < depth-1:
-                encoder_blocks_outputs.append(x)
+            if i < self.depth-1:
+                if not block:
+                    encoder_blocks_outputs.append(x)
+                else:                                       # from intermediate encoders
+                    encoder_blocks_outputs[i-depth] = x     # tentative
+
                 x = layers.MaxPooling2D(3, strides=2, padding="same")(x)
 
         return x, encoder_blocks_outputs
@@ -80,27 +88,32 @@ class FNET2D(model_config):
                 x = layers.UpSampling2D(2)(x)
                 x = layers.Conv2DTranspose(filters, 3, padding="same")(x)
 
-            if self.add_residual:
-                x = layers.add([x, encoder_blocks_outputs[-i-1]])  # Add residual
-            else:
-                x = layers.Concatenate()([x, encoder_blocks_outputs[-i-1]]) # concatenate
+            residual = encoder_blocks_outputs[-i-1]
+            if residual.shape[-1] != filters:       # tentative
+                residual = layers.Conv2D(filters, 1, padding="same")(residual)
 
-            x = self.conv_block(filters)(x)
+            if self.add_residual:
+                x = layers.add([x, residual])  # Add residual
+            else:
+                x = layers.Concatenate()([x, residual]) # concatenate
+
+            name = f'decoder_block_{chr(block+65)}{i+1}'
+            x = self.conv_block(filters,name)(x)
 
         return x
 
-    def encoder_decoder(self, x, previous_block_activation):
+    def encoder_decoder(self, x):
 
+        encoder_blocks_outputs = []
         for i in range(self.depth):
             d = min(i+2, self.depth)
             x, encoder_blocks_outputs = \
                 self.encoder_blocks(
-                    x, previous_block_activation, self.panel_sizes[-i:], i
+                    x, encoder_blocks_outputs, self.panel_sizes[-i:], i
                 )
             x = self.decoder_blocks(
                     x, encoder_blocks_outputs, self.panel_sizes[-d:], i
                 )  
-            previous_block_activation = x     
 
         return x
 
@@ -130,9 +143,8 @@ class FNET2D(model_config):
         pad = self.compute_zero_padding()
         inter_inputs = self.take_off(inputs, pad)
         x = inter_inputs
-        previous_block_activation = x  # Set aside next residual
 
-        x = self.encoder_decoder(x, previous_block_activation)
+        x = self.encoder_decoder(x)
 
         x = self.landing(x, pad)
         # Add a per-pixel classification layer
