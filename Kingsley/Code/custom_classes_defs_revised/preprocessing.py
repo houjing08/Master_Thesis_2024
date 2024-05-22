@@ -492,8 +492,10 @@ class Thebe(Preprocess):
 
         if sub_group.lower() in ['train','val','test']:
             sub_group = sub_group.lower()
-            imgs_path = join(self.seismic_url, f'seis_{sub_group}.npy')
-            labels_path = join(self.annotations_url, f'fault_{sub_group}.npy')
+            imgs_path = join(self.seismic_url, sub_group)
+            imgs_path = join(imgs_path, f'seis_{sub_group}.npy')
+            labels_path = join(self.annotations_url, sub_group)
+            labels_path = join(labels_path, f'fault_{sub_group}.npy')
         else: 
             raise Exception(f'Non-valid subgroup: {sub_group}!')
 
@@ -501,11 +503,11 @@ class Thebe(Preprocess):
 
     def load_img_masks(self, imgs_path, labels_path):
         
-        imgs = np.load(imgs_path).astype('float32')
+        imgs = np.load(imgs_path) #.astype('float32')
         
-        labels = np.load(labels_path).astype('uint8')
+        labels = np.load(labels_path) #.astype('uint8')
         
-        return imgs, labels
+        return np.expand_dims(imgs,-1), np.expand_dims(labels,-1)
 
     
     def data_generator(self, sub_group='train', batch_size=1, as_numpy=False, cache=False):
@@ -558,7 +560,7 @@ class Thebe(Preprocess):
             np.random.choice(np.arange(len(labels)), num_images, replace=False)
         )
         self.figrows = 2 if (y_pred is None) else 3
-        plt.figure(figsize=(5*self.rows,5*num_images)) 
+        plt.figure(figsize=(5*self.figrows,5*num_images)) 
         self.figcount = 1
         
         # Display input image
