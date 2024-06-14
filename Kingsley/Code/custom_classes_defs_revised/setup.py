@@ -27,6 +27,7 @@ class model_config(keras.Model):
             shuffle=False, 
             verbose=0,
             new_training_session=False,
+            resume_training_session=0,
             save_path='',
             img_shape=(28,28), 
             target_size=(28,28), 
@@ -50,6 +51,7 @@ class model_config(keras.Model):
         self.training_args = dict(epochs=epochs, batch_size=batch_size,
                                   shuffle=shuffle, verbose=verbose)
         self.new_training_session = new_training_session
+        self.resume_training_session = resume_training_session
         self.save_path = save_path
         self.threshold = threshold
         self.pos_label = pos_label
@@ -137,8 +139,14 @@ class model_config(keras.Model):
             else:
                 self.new_training_session = False
 
-    def execute_training(self, model, data, saveas='model',
-                          metrics=['loss','val_loss'], plot_history=True):
+    def execute_training(self, 
+        model, 
+        data, 
+        saveas='model', 
+        metrics=['loss','val_loss'], 
+        plot_history=True, 
+        save_model_history=True
+    ):
         
         if self.new_training_session:
             for chkpt in glob(self.save_path+'/*.h5'):
@@ -158,15 +166,15 @@ class model_config(keras.Model):
             for chkpt in sorted(glob(self.save_path+'/*.h5'))[:-1]: # keep one only
                 os.remove(chkpt)
 
-            if plot_history:
-                show_convergence(history.history, metrics=metrics)
             with open(join(self.save_path, saveas+'_info.txt'), "w") as fp:
                 fp.write(self.info(0))
-            try:
+
+            if plot_history:
+                show_convergence(history.history, metrics=metrics)
+
+            if save_model_history:
                 with open(join(self.save_path, saveas+'_history.pickle'), "wb") as fp:
                     pickle.dump(history, fp)
-            except TypeError:
-                print(f"Error writing {saveas+'_history.pickle'}!")
 
         else:
 
@@ -180,12 +188,18 @@ class model_config(keras.Model):
             except FileNotFoundError:
                 print('No saved model/weights found!')
                 model, history = None, None
-
-        best_model_track = sorted(glob(self.save_path+'/*.h5'))
-        if len(best_model_track):
-            model.load_weights(best_model_track[-1])
-            # mode = best_model_track[0].__contains__('loss')-1
-            # model.load_weights(best_model_track[mode])
+        try:
+            best_model_track = sorted(glob(self.save_path+'/*.h5'))
+            if len(best_model_track):
+                model.load_weights(best_model_track[-1])
+                print("Best model weights loaded!")
+                # mode = best_model_track[0].__contains__('loss')-1
+                # model.load_weights(best_model_track[mode])
+            else:
+                print(f"No model weights found in {self.save_path}!")
+        except TypeError:
+            print(f"Difficulty reading best model from {self.save_path}!")
+            print('Error possibly arising from reads across distributed replica!')
 
         return model, history
 
@@ -237,7 +251,7 @@ class model_config(keras.Model):
         ]
         return callback_list
 
-    def evaluate_sklearn(self, y_true, y_pred, report=False):
+    def evaluate_sklearn(self, y_true, y_pred, report=False, average=None):
         """ 
         Metrics to evaluate model performance:
         @params:
@@ -252,17 +266,19 @@ class model_config(keras.Model):
         """
         eval_time = time.time()
         if hasattr(y_true, 'as_numpy_iterator'): # tensorflow dataset
-            y_true = np.concatenate([a[-1] for a in y_true.as_numpy_iterator()])
+            y_true = np.concatenate([a[1] for a in y_true.as_numpy_iterator()])
         y_true = y_true.flatten()
         y = y_pred.reshape(-1, self.channels_dim[1])
-        AP = average_precision_score(y_true, y, pos_label=self.pos_label)
+        AP = average_precision_score(y_true, y, pos_label=self.pos_label, average=average)
 
         # ODS (single threshold for all images)
         if self.pos_label and self.channels_dim[1]==1:
-            cut = np.quantile(y_pred, q=self.threshold)
+            cut = self.threshold
+            # cut = np.quantile(y_pred, q=cut)
             y = (y_pred > cut).astype('uint8').flatten()
         elif self.channels_dim[1]==1:
-            cut = np.quantile(y_pred, q=1-self.threshold)
+            cut = 1-self.threshold
+            # cut = np.quantile(y_pred, q=cut)
             y = (y_pred < cut).astype('uint8').flatten()
         else:
             y = np.argmax(y_pred, axis=-1).astype('uint8').flatten()
@@ -325,9 +341,9 @@ class model_config(keras.Model):
         data_aug = keras.Sequential(
                 [
                     layers.RandomFlip('horizontal'),
-                    layers.RandomContrast(factor=0.2),
+                    # layers.RandomContrast(factor=0.2),
                     layers.RandomRotation(factor=0.2), # value_range=(0,self.scaling)),
-                    layers.RandomBrightness(factor=0.2), # value_range=(0,self.scaling)),
+                    # layers.RandomBrightness(factor=0.2), # value_range=(0,self.scaling)),
                     layers.RandomFlip('vertical')
                 ]
             )
@@ -390,9 +406,6 @@ class f1_score(keras.metrics.Metric):
   def update_state(self, y_true, y_pred, sample_weight=None):
     y_true = tf.cast(y_true, "bool")
     y_pred = tf.cast(y_pred, "float32")
-
-    # if len(y_true.shape) < len(y_pred.shape):
-    #     y_true = tf.expand_dims(y_true,-1)
 
     if self.positive_label:
       y_pred = y_pred > self.threshold

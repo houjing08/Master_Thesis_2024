@@ -5,7 +5,7 @@ import time
 import cv2
 from array import array
 from os import walk
-from os.path import isfile,join
+from os.path import isfile, join
 from matplotlib import pyplot as plt
 import numpy as np
 from glob import glob
@@ -258,17 +258,18 @@ class Oxford_Pets(Preprocess):
         target_img -= 1
         return input_img, target_img
 
-    def data_generator(self, input_img_paths, target_img_paths, cache=False):
+    def data_generator(self, input_img_paths, target_img_paths, cache=False, batch_size=None):
         """Returns a TF Dataset.
         Cache data to memory depending on available GPU memory.
         """
-
+        if batch_size is None:
+            batch_size = self.batch_size
         dataset = tf_data.Dataset.from_tensor_slices((input_img_paths, target_img_paths))
         dataset = dataset.map(self.load_img_masks, num_parallel_calls=tf_data.AUTOTUNE) \
-                 .batch(self.batch_size)
+                 .batch(batch_size)
         return dataset.cache() if cache else dataset
     
-    def split_data(self, train_ratio = 0.1, val_ratio = 0.1, seed=None, cache=False):
+    def split_data(self, train_ratio = 0.1, val_ratio = 0.1, seed=None, cache=False, weighted_loss=False):
         """ 
         Extracts and splits data into training and validation sets 
         train_ratio = fraction of entire data
@@ -293,12 +294,44 @@ class Oxford_Pets(Preprocess):
         self.validation_size = len(self.val_input_paths)
 
         # Instantiate dataset for each split
-        train_dataset = self.data_generator(self.train_input_paths, self.train_target_paths, cache)
-        valid_dataset = self.data_generator(self.val_input_paths, self.val_target_paths, cache)
-        test_dataset = self.data_generator(self.test_input_paths, self.test_target_paths)
+        if weighted_loss:
+
+            train_dataset = self.data_generator(self.train_input_paths, self.train_target_paths, batch_size=1)
+            valid_dataset = self.data_generator(self.val_input_paths, self.val_target_paths, batch_size=1)
+            test_dataset = self.data_generator(self.test_input_paths, self.test_target_paths, batch_size=1)
+            train_dataset = self.add_weights(train_dataset, cache)
+            valid_dataset = self.add_weights(valid_dataset, cache)
+            test_dataset = self.add_weights(test_dataset, cache)
+
+        else:
+
+            train_dataset = self.data_generator(self.train_input_paths, self.train_target_paths, cache)
+            valid_dataset = self.data_generator(self.val_input_paths, self.val_target_paths, cache)
+            test_dataset = self.data_generator(self.test_input_paths, self.test_target_paths, cache)
+
         print(f'Data prep. duration: ___{(time.time()-start)/60:.2f}___ minutes.')
 
         return train_dataset, valid_dataset, test_dataset
+    
+    
+    def add_weights(self, dataset, cache):
+        """ Creates class weights for given tf dataset """
+        y = np.array([a[-1] for a in dataset.as_numpy_iterator()], dtype='uint8')
+        num_pixels = np.prod(y.shape[1:])
+        num_class0 = np.count_nonzero(y==0, axis=(1,len(y.shape)-1), keepdims=True)
+        num_class1 = np.count_nonzero(y==1, axis=(1,len(y.shape)-1), keepdims=True)
+        num_class2 = np.count_nonzero(y==2, axis=(1,len(y.shape)-1), keepdims=True)
+        w_class0 = np.divide(num_class0, num_pixels)
+        w_class1 = np.divide(num_class1, num_pixels)
+        w_class2 = np.divide(num_class2, num_pixels)
+        sample_weights = np.where(y==0, w_class0, y)
+        sample_weights = np.where((sample_weights==1), w_class1, sample_weights)
+        sample_weights = np.where((sample_weights==2), w_class2, sample_weights).astype('float32')
+
+        X = np.array([a[0] for a in dataset.as_numpy_iterator()])
+        dset = tf_data.Dataset.from_tensor_slices( (X[0], y[0], sample_weights[0]) ).batch(self.batch_size)
+
+        return dset.cache() if cache else dset
     
     def plot_multiple(self, img_path, idx, rows, num_images, count, mask=False):
         for col in range(num_images):
@@ -349,53 +382,53 @@ class Oxford_Pets(Preprocess):
 
 
 ## ==================================================
-class Thebe(Preprocess):
-    """ Handles loading of Thebe seismic data and labels into tf.datasets:
-        training, validation and test datasets.
-        Data stored as numpy array in npy format in some url (path).
-      """
-    def __init__(self, 
-                seismic_url, annotations_url, batch_size,
-                threshold=0.5, pos_label=1, seed=None
-        ):
+# class Thebe(Preprocess):
+#     """ Handles loading of Thebe seismic data and labels into tf.datasets:
+#         training, validation and test datasets.
+#         Data stored as numpy array in npy format in some url (path).
+#       """
+#     def __init__(self, 
+#                 seismic_url, annotations_url, batch_size,
+#                 threshold=0.5, pos_label=1, seed=None
+#         ):
                                  
-        super().__init__(threshold=threshold, pos_label=pos_label)
-        self.threshold = threshold
-        self.pos_label = pos_label
-        self.seismic_url = seismic_url
-        self.annotations_url = annotations_url
-        self.seed = seed
-        self.batch_size = batch_size
+#         super().__init__(threshold=threshold, pos_label=pos_label)
+#         self.threshold = threshold
+#         self.pos_label = pos_label
+#         self.seismic_url = seismic_url
+#         self.annotations_url = annotations_url
+#         self.seed = seed
+#         self.batch_size = batch_size
 
-    def load_img_masks(self, imgs_paths, labels_paths):
-        imgs = np.stack(
-            [np.load(img).astype('float32') for img in imgs_paths]
-        )
-        labels = np.stack(
-            [np.load(label).astype('float32') for label in labels_paths]
-        )
-        return imgs, labels
+#     def load_img_masks(self, imgs_paths, labels_paths):
+#         imgs = np.stack(
+#             [np.load(img).astype('float32') for img in imgs_paths]
+#         )
+#         labels = np.stack(
+#             [np.load(label).astype('float32') for label in labels_paths]
+#         )
+#         return imgs, labels
 
     
-    def data_generator(self, sub_group='train', as_numpy=False):
-        """ 
-        Extracts and splits data into training and validation sets 
-        train_ratio = fraction of entire data
-        val_ratio = fraction of entire data
-        """
-        path_to_imgs = join(self.seismic_url, sub_group)
-        path_to_labels = join(self.annotations_url, sub_group)
-        imgs_paths = sorted(glob(path_to_imgs+'/*'))
-        labels_paths = sorted(glob(path_to_labels+'/*'))
+#     def data_generator(self, sub_group='train', as_numpy=False):
+#         """ 
+#         Extracts and splits data into training and validation sets 
+#         train_ratio = fraction of entire data
+#         val_ratio = fraction of entire data
+#         """
+#         path_to_imgs = join(self.seismic_url, sub_group)
+#         path_to_labels = join(self.annotations_url, sub_group)
+#         imgs_paths = sorted(glob(path_to_imgs+'/*'))
+#         labels_paths = sorted(glob(path_to_labels+'/*'))
 
-        random.Random(self.seed).shuffle(imgs_paths)
-        random.Random(self.seed).shuffle(labels_paths)
+#         random.Random(self.seed).shuffle(imgs_paths)
+#         random.Random(self.seed).shuffle(labels_paths)
 
-        if as_numpy:
-            return self.load_img_masks(imgs_paths, labels_paths)
-        dataset = tf_data.Dataset.from_tensor_slices(self.load_img_masks(imgs_paths, labels_paths))
+#         if as_numpy:
+#             return self.load_img_masks(imgs_paths, labels_paths)
+#         dataset = tf_data.Dataset.from_tensor_slices(self.load_img_masks(imgs_paths, labels_paths))
 
-        return dataset.batch(self.batch_size)
+#         return dataset.batch(self.batch_size)
     
 
 
@@ -476,7 +509,9 @@ class Thebe(Preprocess):
         threshold=0.5, 
         pos_label=1, 
         img_size=(96,96),
-        ratio = None
+        ratio = None,
+        image_cmap='seismic',
+        label_cmap='seismic'
     ):
         
         super().__init__(threshold=threshold, pos_label=pos_label)
@@ -485,6 +520,8 @@ class Thebe(Preprocess):
         self.annotations_url = annotations_url
         self.img_size = img_size
         self.ratio = ratio
+        self.image_cmap = image_cmap
+        self.label_cmap = label_cmap
 
     def select_path(self, sub_group='train'):
         """ Picks paths containing image patches and 
@@ -510,7 +547,14 @@ class Thebe(Preprocess):
         return np.expand_dims(imgs,-1), np.expand_dims(labels,-1)
 
     
-    def data_generator(self, sub_group='train', batch_size=1, as_numpy=False, cache=False):
+    def data_generator(
+        self, 
+        sub_group='train', 
+        batch_size=1, 
+        as_numpy=False, 
+        cache=False,
+        weighted_loss=False
+    ):
         """ 
         Extracts and splits data into training, validation and test sets 
         Cache data to memory depending on available GPU memory.
@@ -524,44 +568,71 @@ class Thebe(Preprocess):
             L = int(len(y) * self.ratio)
             X, y  = X[:L], y[:L]
 
-        if sub_group=='train':
+        if sub_group.__contains__('train'):
             self.train_size = len(y)
-        elif sub_group=='val':
+        elif sub_group.__contains__('val'):
             self.validation_size = len(y)
-        elif sub_group=='test':
+        elif sub_group.__contains__('test'):
             self.test_size = len(y)
 
         if as_numpy:
-            return X, y
+            return (X, y, self.get_weights(y)) if (weighted_loss) else (X, y)
 
-        dataset = tf_data.Dataset.from_tensor_slices((X,y))
+        dataset = tf_data.Dataset.from_tensor_slices(
+            (X, y, self.get_weights(y)) if (weighted_loss) else (X, y)
+        )
         dataset = dataset.batch(batch_size)
         
         return dataset.cache() if cache else dataset
     
+
+    
+    def get_weights(self, y):
+        """ Creates class weights for given labels y """
+        num_pixels = np.prod(y.shape[1:])
+        num_negatives = np.count_nonzero(abs(y)<1e-6, axis=(1,len(y.shape)-1), keepdims=True)
+        num_positives = np.subtract(num_pixels, num_negatives)
+        w_positives = np.divide(num_positives, num_pixels)
+        w_negatives = np.divide(num_negatives, num_pixels)
+        sample_weights = np.where(abs(y)<1e-6, w_negatives, w_positives)
+
+        return sample_weights.astype('float32')
+    
+    
     def plot_multiple(self, data, idx, label=True):
         num_images = len(idx)
         for col in range(num_images):
-            plt.subplot(self.figrows, num_images, self.figcount)
-            plt.axis('off')
+            ax = self.axs[self.row][col]
+            ax.axis('off')
             if label:
                 img = data[col]
-                plt.imshow(img, cmap='gray')
-                plt.title(f'label {idx[col]}')
+                ax.imshow(img, cmap=self.label_cmap)
+                ax.set_title(f'label {idx[col]}')
             else:
                 img = data[col]
-                plt.imshow(img, cmap='seismic')
-                plt.title(f'image {idx[col]}')
-            self.figcount = self.figcount + 1 
+                ax.imshow(img, cmap=self.image_cmap)
+                ax.set_title(f'image {idx[col]}')
+        self.row = self.row + 1 
                 
-    def display_sample_images(self, imgs, labels, y_pred=None, num_images=8):
+    def display_sample_images(self, imgs, labels, y_pred=None, num_images=8, save_path=None):
         """Display images, labels and predictions for a selected number of images."""
         idx = sorted(
             np.random.choice(np.arange(len(labels)), num_images, replace=False)
         )
-        self.figrows = 2 if (y_pred is None) else 3
-        plt.figure(figsize=(5*self.figrows,5*num_images)) 
-        self.figcount = 1
+        
+        if isinstance(save_path, str):
+            with open(join(save_path,'images.npy'), 'wb') as fp:
+                np.save(fp, imgs[idx])
+            with open(join(save_path,'labels.npy'), 'wb') as fp:
+                np.save(fp, labels[idx])
+            with open(join(save_path,'index.npy'), 'wb') as fp:
+                np.save(fp, idx)
+
+        self.num_rows = 2 if (y_pred is None) else 3
+        fig, axs = plt.subplots(ncols=num_images, nrows=self.num_rows)
+        fig.set_figwidth(15)
+        self.axs = axs
+        self.row = 0
         
         # Display input image
         self.plot_multiple(imgs[idx], idx, label=False)
@@ -573,4 +644,6 @@ class Thebe(Preprocess):
         if (y_pred is not None):
             self.plot_multiple(y_pred[idx], idx)
 
-        plt.subplots_adjust(hspace=0)
+        fig.tight_layout(pad=0.0)
+        plt.subplots_adjust(hspace=0.5)
+        plt.show()
