@@ -7,8 +7,8 @@ https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/YBYGBK
 Wisting - DISKO database (2D SEGY files in the folder - **Data**)
 
 ### Code:
-All available in the folder - **Final**  
-folder - custom_classes_defs includes U-Net, F-Net model variants, model setup, and preprocessing functions.  
+All are available in the folder - **Final**  
+The subfolder - **custom_classes_defs** includes U-Net, F-Net model variants, model setup, and preprocessing functions.  
 
 - seismic_segy_conversion.ipynb for converting seismic SEGY format to NumPy format  
 - prepare_patches.ipynb for splitting 3D seismic volume int0 2D patches   
