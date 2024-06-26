@@ -11,9 +11,9 @@ All are available in the folder - **Final**
 The subfolder - **custom_classes_defs** includes U-Net, F-Net model variants, model setup, and preprocessing functions.  
 
 - seismic_segy_conversion.ipynb for converting seismic SEGY format to NumPy format  
-- prepare_patches.ipynb for splitting 3D seismic volume int0 2D patches   
+- prepare_patches.ipynb for splitting 3D seismic volume into 2D patches   
 - stacked_patches.ipynb for stacking 2D patches and preparing datasets stacking before model training  
-- pred_wisting_restore.ipynb is an example for model prediction on Wisting data  
+- pred_wisting_restore.ipynb is an example for model prediction on Wisting data
 
 
 
