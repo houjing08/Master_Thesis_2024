@@ -15,7 +15,7 @@ The subfolder - **weights** contains model weights, training history and info. f
 - *prepare_patches.ipynb* for splitting 3D seismic volume into 2D patches   
 - *stacked_patches.ipynb* for stacking 2D patches and preparing datasets before model training
 - *thebe.ipynb* for training any variant of U/F-Net models
-- *thebe_hed.ipynb* for transfer learning using VGG16 (HED-style)
+- *thebe_hed.ipynb* for transfer learning (HED-style) using VGG16
 - *thebe_evaluate.ipynb* for evaluating a model, given the path to the saved model weights
 - *visualize_layers.ipynb* example for visualizing model activation from selected layers
 - *pred_wisting_restore.ipynb* is an example of model prediction on Wisting data
