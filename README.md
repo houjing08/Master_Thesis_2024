@@ -8,7 +8,7 @@ Wisting - DISKO database (2D SEGY files in the folder - **Data**)
 
 ### Code:
 All are available in the folder - **Final**  
-The subfolder - **custom_classes_defs** includes U-Net, F-Net model variants, model setup, and preprocessing functions.   
+The subfolder - **custom_classes_defs** contains custom classes definitions for the configuration (setup.py), data preprocessing functions (preprocessing.py), and graphs defining various models.   
 The subfolder - **weights** contains model weights, training history and info. for some models.  
 
 - *seismic_segy_conversion.ipynb* for converting seismic SEGY format to NumPy format  
