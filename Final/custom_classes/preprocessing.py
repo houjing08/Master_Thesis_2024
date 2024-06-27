@@ -10,8 +10,10 @@ from matplotlib import pyplot as plt
 import numpy as np
 from glob import glob
 import pandas as pd
-# import segyio
-# from skimage.util.shape import view_as_windows
+import segyio
+from typing import Tuple
+from itertools import compress,product
+from skimage.util.shape import view_as_windows
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
 
@@ -29,7 +31,7 @@ from PIL import ImageOps
 
 ## ==================================================
 class Preprocess():
-    """ Some common data preprocessing tools """
+    """ Common preprocessing tools """
     def __init__(self, threshold=0.5, pos_label=1):
         self.scaler = MinMaxScaler()   
         self.threshold = threshold
@@ -381,77 +383,119 @@ class Oxford_Pets(Preprocess):
         plt.subplots_adjust(hspace=0)
 
 
-# ## ==================================================
-# ## Seismic segy header and data loading
+## ==================================================
+# split 3D volume to 2D patches
+# reference: https://github.com/anyuzoey/CNNforFaultInterpretation
 
-# # Reference segyio, https://github.com/equinor/segyio
-# # Reference Segyio-notebook, https://github.com/equinor/segyio-notebooks
-# # trace header and text header functions
-# def parse_trace_headers(segyfile, n_traces):
-#     """
-#     Parse the segy file trace headers into a pandas dataframe.
-#     Column names are defined from segyio internal tracefield
-#     One row per trace
-#     """
-#     # Get all header keys
-#     headers = segyio.tracefield.keys
-#     # Initialize dataframe with trace id as index and headers as columns
-#     df = pd.DataFrame(index=range(1, n_traces + 1),columns=headers.keys())
-#     # Fill dataframe with all header values
-#     for k, v in headers.items():
-#         df[k] = segyfile.attributes(v)[:]
-#     return df
+def split_Image(bigImage,isMask,top_pad,bottom_pad,left_pad,right_pad,splitsize,stepsize,vertical_splits_number,horizontal_splits_number):
+#     print(bigImage.shape)
+    if isMask==True:
+        arr = np.pad(bigImage,((top_pad,bottom_pad),(left_pad,right_pad)),"reflect")
+        splits = view_as_windows(arr, (splitsize,splitsize),step=stepsize)
+        splits = splits.reshape((vertical_splits_number*horizontal_splits_number,splitsize,splitsize))
+    else: 
+        arr = np.pad(bigImage,((top_pad,bottom_pad),(left_pad,right_pad),(0,0)),"reflect")
+        splits = view_as_windows(arr, (splitsize,splitsize,3),step=stepsize)
+        splits = splits.reshape((vertical_splits_number*horizontal_splits_number,splitsize,splitsize,3))
+    return splits # return list of arrays.
 
-# def parse_text_header(segyfile):
-#     """
-#     Format segy text header into a readable, clean dict
-#     """
-#     raw_header = segyio.tools.wrap(segyfile.text[0])
-#     # Cut on C*int pattern
-#     cut_header = re.split(r'C ', raw_header)[1::]
-#     # Remove end of line return
-#     text_header = [x.replace('\n', ' ') for x in cut_header]
-#     text_header[-1] = text_header[-1][:-2]
-#     # Format in dict
-#     clean_header = {}
-#     i = 1
-#     for item in text_header:
-#         key = "C" + str(i).rjust(2, '0')
-#         i += 1
-#         clean_header[key] = item
-#     return clean_header
+## restore patches to full image
+def recover_Image(patches: np.ndarray, imsize: Tuple[int, int, int], left_pad,right_pad,top_pad,bottom_pad, overlapsize):
+#     patches = np.squeeze(patches)
+    assert len(patches.shape) == 5
 
-# def plot_segy(file):
-#     """
-#     Load data and get basic info of no.of samples,traces etc
-#     possible to check text header and trace header if it is needed
-#     """
-#     with segyio.open(file, ignore_geometry=True) as f:
-#         n_traces = f.tracecount
-#         sample_rate = segyio.tools.dt(f) / 1000
-#         n_samples = f.samples.size
-#         twt = f.samples
-#         data = f.trace.raw[:]
-#         #Load headers - binary header, text header and trace header
-#         bin_headers = f.bin
-#         text_headers = parse_text_header(f)
-#         trace_headers = parse_trace_headers(f, n_traces)
-#         print(f'N Traces: {n_traces}, N Samples: {n_samples}, Sample rate: {sample_rate}ms, Trace length: {max(twt)}')
-#         print(f'2D segy shape: {data.shape}')
-#         #print(f'Binary header: {bin_headers}')
-#         #print(f'Text header: {text_headers}')
-#         #print(f'Trace header: {trace_headers}')
-#         extent = [1, n_traces, twt[-1], twt[0]]
-#     return data, extent
+    i_h, i_w, i_chan = imsize
+    image = np.zeros((i_h+top_pad+bottom_pad, i_w+left_pad+right_pad, i_chan), dtype=patches.dtype)
+    divisor = np.zeros((i_h+top_pad+bottom_pad, i_w+left_pad+right_pad, i_chan), dtype=patches.dtype)
+#     print("i_h, i_w, i_chan",i_h, i_w, i_chan)
+    n_h, n_w, p_h, p_w,_= patches.shape
+    
+    o_w = overlapsize
+    o_h = overlapsize
+
+    s_w = p_w - o_w
+    s_h = p_h - o_h
+
+    for i, j in product(range(n_h), range(n_w)):
+        patch = patches[i,j]
+        image[(i * s_h):(i * s_h) + p_h, (j * s_w):(j * s_w) + p_w] += patch
+        divisor[(i * s_h):(i * s_h) + p_h, (j * s_w):(j * s_w) + p_w] += 1
+
+    recover = image / divisor
+    return recover[top_pad:top_pad+i_h, left_pad:left_pad+i_w]
+
+
+#====================================================
+## Seismic segy header and data loading
+
+# Reference segyio, https://github.com/equinor/segyio
+# Reference Segyio-notebook, https://github.com/equinor/segyio-notebooks
+# trace header and text header functions
+
+def parse_trace_headers(segyfile, n_traces):
+    """
+    Parse the segy file trace headers into a pandas dataframe.
+    Column names are defined from segyio internal tracefield
+    One row per trace
+    """
+    # Get all header keys
+    headers = segyio.tracefield.keys
+    # Initialize dataframe with trace id as index and headers as columns
+    df = pd.DataFrame(index=range(1, n_traces + 1),columns=headers.keys())
+    # Fill dataframe with all header values
+    for k, v in headers.items():
+        df[k] = segyfile.attributes(v)[:]
+        return df
+
+def parse_text_header(segyfile):
+    """
+    Format segy text header into a readable, clean dict
+    """
+    raw_header = segyio.tools.wrap(segyfile.text[0])
+    # Cut on C*int pattern
+    cut_header = re.split(r'C ', raw_header)[1::]
+    # Remove end of line return
+    text_header = [x.replace('\n', ' ') for x in cut_header]
+    text_header[-1] = text_header[-1][:-2]
+    # Format in dict
+    clean_header = {}
+    i = 1
+    for item in text_header:
+        key = "C" + str(i).rjust(2, '0')
+        i += 1
+        clean_header[key] = item
+    return clean_header
+
+def plot_segy(file):
+    """
+    Load data and get basic info of no.of samples,traces etc
+    possible to check text header and trace header if it is needed
+    """
+    with segyio.open(file, ignore_geometry=True) as f:
+        n_traces = f.tracecount
+        sample_rate = segyio.tools.dt(f) / 1000
+        n_samples = f.samples.size
+        twt = f.samples
+        data = f.trace.raw[:]
+        #Load headers - binary header, text header and trace header
+        bin_headers = f.bin
+        text_headers = parse_text_header(f)
+        trace_headers = parse_trace_headers(f, n_traces)
+        print(f'N Traces: {n_traces}, N Samples: {n_samples}, Sample rate: {sample_rate}ms, Trace length: {max(twt)}')
+        print(f'2D segy shape: {data.shape}')
+        #print(f'Binary header: {bin_headers}')
+        #print(f'Text header: {text_headers}')
+        #print(f'Trace header: {trace_headers}')
+        extent = [1, n_traces, twt[-1], twt[0]]
+    return data, extent
 
 
 ## ==================================================
 
 class Thebe(Preprocess):
-    """ 
-    Handles loading of Thebe seismic data and labels into tf.datasets:
-    training, validation and test datasets.
-    Data stored as numpy array in npy format in some url (path).
+    """ Handles loading of Thebe seismic data and labels into tf.datasets:
+        training, validation and test datasets.
+        Data stored as numpy array in npy format in some url (path).
     """
     def __init__(self, 
         seismic_url, 
