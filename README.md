@@ -8,7 +8,7 @@ Wisting - DISKO database (2D SEGY files in the folder - **Data**)
 
 ### Code:
 All are available in the folder - **Code**  
-The subfolder - **custom_classes** contains custom classes definitions for 
+The subfolder - **custom_classes_defs** contains custom classes definitions for 
 - the configuration (setup.py),
 - data preprocessing functions (preprocessing.py), and
 - graphs defining various models.
