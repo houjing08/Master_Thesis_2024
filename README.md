@@ -13,7 +13,7 @@ The subfolder - **custom_classes_defs** contains custom classes definitions for
 - data preprocessing functions (preprocessing.py), and
 - graphs defining various models.
    
-The subfolder - **weights** contains model weights, training history and info. for some models.  
+The subfolder - **weights** contains model weights, training history and info.  
 
 - *seismic_segy_conversion.ipynb* for converting seismic SEGY format to NumPy format  
 - *prepare_patches.ipynb* for splitting 3D seismic volume into 2D patches   
@@ -24,6 +24,9 @@ The subfolder - **weights** contains model weights, training history and info. f
 - *visualize_layers.ipynb* example for visualizing model activation from selected layers
 - *wisting_restore.ipynb* is an example of model prediction on Wisting data
 - *thebe_restore.ipynb* is an example of model prediction on Thebe data
+
+
+The subfolder - **examples** contains selected examples of model training, prediction and evluation (U-Net2 and F-Net2).  
 
 
 
