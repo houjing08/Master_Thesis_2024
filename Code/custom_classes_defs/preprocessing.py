@@ -384,8 +384,8 @@ class Oxford_Pets(Preprocess):
         plt.subplots_adjust(hspace=0)
 
 
-## ==================================================
-# split 3D volume to 2D patches
+## ========================================================
+# split 3D volume to 2D patches and restore the image from the patches
 # reference: https://github.com/anyuzoey/CNNforFaultInterpretation
 
 def split_Image(bigImage,isMask,top_pad,bottom_pad,left_pad,right_pad,splitsize,stepsize,vertical_splits_number,horizontal_splits_number):
@@ -425,6 +425,37 @@ def recover_Image(patches: np.ndarray, imsize: Tuple[int, int, int], left_pad,ri
     recover = image / divisor
     return recover[top_pad:top_pad+i_h, left_pad:left_pad+i_w]
 
+## ==================================================
+## plot random patch images 
+
+def plot_random_images(images, labels, num_images=4):
+    # Select random indices
+    num_total_images = len(images)
+    random_indices = np.random.choice(num_total_images, size=num_images, replace=False)
+    
+    fig, axes = plt.subplots(3, num_images, figsize=(18, 10))
+    
+    # Plot overlapped images
+    for i, idx in enumerate(random_indices):
+        axes[0, i].imshow(images[idx], cmap='seismic', aspect='auto')
+        axes[0, i].axis('off')
+        axes[0, i].set_title(f"seismic id: {idx}")
+        axes[0, i].imshow(labels[idx], cmap='gray', aspect='auto',alpha=0.3)
+        
+    # Plot labels
+    for i, idx in enumerate(random_indices):
+        axes[1, i].imshow(labels[idx],cmap='gray', aspect='auto')
+        axes[1, i].set_title(f"label id: {idx}")
+        axes[1, i].axis('off')
+    
+    # Plot original images
+    for i, idx in enumerate(random_indices):
+        axes[2, i].imshow(images[idx], cmap='seismic', aspect='auto')
+        axes[2, i].axis('off')
+        axes[2, i].set_title(f"original seismic: {idx}")
+    
+    plt.tight_layout()
+    plt.show()
 
 #====================================================
 ## Seismic segy header and data loading
