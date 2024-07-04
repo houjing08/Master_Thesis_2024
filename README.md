@@ -22,8 +22,8 @@ The subfolder - **weights** contains model weights, training history and info.
 - *thebe_hed.ipynb* for transfer learning (HED-style) using VGG16
 - *thebe_evaluate.ipynb* for evaluating a model, given the path to the saved model weights
 - *visualize_layers.ipynb* example for visualizing model activation from selected layers
-- *wisting_restore.ipynb* is an example of model prediction on Wisting data
-- *thebe_restore.ipynb* is an example of model prediction on Thebe data
+- *wisting_restore.ipynb* is an example of model prediction along selected lines on Wisting data
+- *thebe_restore.ipynb* is an example of model prediction along selected lines on Thebe data
 
 
 The subfolder - **examples** contains selected examples of model training, prediction and evluation (U-Net2 and F-Net2).  
